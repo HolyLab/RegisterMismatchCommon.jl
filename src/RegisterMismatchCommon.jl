@@ -1,4 +1,4 @@
-# Note: not a module, included into RegisterMismatch or RegisterMismatchCuda
+module RegisterMismatchCommon
 
 using RegisterCore, CenterIndexedArrays
 
@@ -7,15 +7,15 @@ export correctbias!, nanpad, mismatch0, aperture_grid, allocate_mmarrays, defaul
 const DimsLike = Union{AbstractVector{Int}, Dims}
 const WidthLike = Union{AbstractVector,Tuple}
 
-mismatch{T<:AbstractFloat}(fixed::AbstractArray{T}, moving::AbstractArray{T}, maxshift::DimsLike; normalization = :intensity) = mismatch(T, fixed, moving, maxshift; normalization=normalization)
+mismatch(fixed::AbstractArray{T}, moving::AbstractArray{T}, maxshift::DimsLike; normalization = :intensity) where {T<:AbstractFloat} = mismatch(T, fixed, moving, maxshift; normalization=normalization)
 mismatch(fixed::AbstractArray, moving::AbstractArray, maxshift::DimsLike; normalization = :intensity) = mismatch(Float32, fixed, moving, maxshift; normalization=normalization)
 
-mismatch_apertures{T<:AbstractFloat}(fixed::AbstractArray{T}, moving::AbstractArray{T}, args...; kwargs...) = mismatch_apertures(T, fixed, moving, args...; kwargs...)
+mismatch_apertures(fixed::AbstractArray{T}, moving::AbstractArray{T}, args...; kwargs...) where {T<:AbstractFloat} = mismatch_apertures(T, fixed, moving, args...; kwargs...)
 mismatch_apertures(fixed::AbstractArray, moving::AbstractArray, args...; kwargs...) = mismatch_apertures(Float32, fixed, moving, args...; kwargs...)
 
-function mismatch_apertures{T}(::Type{T}, fixed::AbstractArray, moving::AbstractArray, gridsize::DimsLike, maxshift::DimsLike; kwargs...)
+function mismatch_apertures(::Type{T}, fixed::AbstractArray, moving::AbstractArray, gridsize::DimsLike, maxshift::DimsLike; kwargs...) where T
     cs = coords_spatial(fixed)
-    aperture_centers = aperture_grid(size(fixed, cs...), gridsize)
+    aperture_centers = aperture_grid(map(d->size(fixed, d), cs), gridsize)
     aperture_width = default_aperture_width(fixed, gridsize)
     mismatch_apertures(T, fixed, moving, aperture_centers, aperture_width, maxshift; kwargs...)
 end
@@ -31,17 +31,19 @@ whenever `i` or `j` is zero.
 Data are imputed by averaging the adjacent non-suspect values.  This
 function works in-place, overwriting the original `mm`.
 """
-function correctbias!{ND,N}(mm::MismatchArray{ND,N}, w = correctbias_weight(mm))
+function correctbias!(mm::MismatchArray{ND,N}, w = correctbias_weight(mm)) where {ND,N}
     T = eltype(ND)
     mxshift = maxshift(mm)
     Imax = CartesianIndex(mxshift)
     Imin = CartesianIndex(map(x->-x,mxshift)::NTuple{N,Int})
-    I1 = CartesianIndex(ntuple(d->d>2?0:1, N)::NTuple{N,Int})  # only first 2 dims
+    I1 = CartesianIndex(ntuple(d->d>2 ? 0 : 1, N)::NTuple{N,Int})  # only first 2 dims
     for I in eachindex(mm)
         if w[I] == 0
             mms = NumDenom{T}(0,0)
             ws = zero(T)
-            for J in CartesianRange(max(Imin, I-I1), min(Imax, I+I1))
+            strt = max(Imin, I-I1)
+            stop = min(Imax, I+I1)
+            for J in CartesianIndices(ntuple(d->strt[d]:stop[d],N))
                 wJ = w[J]
                 if wJ != 0
                     mms += wJ*mm[J]
@@ -55,14 +57,14 @@ function correctbias!{ND,N}(mm::MismatchArray{ND,N}, w = correctbias_weight(mm))
 end
 
 "`correctbias!(mms)` runs `correctbias!` on each element of an array-of-MismatchArrays."
-function correctbias!{M<:MismatchArray}(mms::AbstractArray{M})
+function correctbias!(mms::AbstractArray{M}) where M<:MismatchArray
     for mm in mms
         correctbias!(mm)
     end
     mms
 end
 
-function correctbias_weight{ND,N}(mm::MismatchArray{ND,N})
+function correctbias_weight(mm::MismatchArray{ND,N}) where {ND,N}
     T = eltype(ND)
     w = CenterIndexedArray(ones(T, size(mm)))
     for I in eachindex(mm)
@@ -92,20 +94,20 @@ function nanpad(fixed, moving)
     get(fixed, rng, nanval(T)), get(moving, rng, nanval(T))
 end
 
-nanval{T<:AbstractFloat}(::Type{T}) = convert(T, NaN)
-nanval{T}(::Type{T}) = convert(Float32, NaN)
+nanval(::Type{T}) where {T<:AbstractFloat} = convert(T, NaN)
+nanval(::Type{T}) where {T} = convert(Float32, NaN)
 
 """
 `mm0 = mismatch0(fixed, moving, [normalization])` computes the
 "as-is" mismatch between `fixed` and `moving`, without any shift.
 `normalization` may be either `:intensity` (the default) or `:pixels`.
 """
-function mismatch0{Tf,Tm,N}(fixed::AbstractArray{Tf,N}, moving::AbstractArray{Tm,N}; normalization = :intensity)
+function mismatch0(fixed::AbstractArray{Tf,N}, moving::AbstractArray{Tm,N}; normalization = :intensity) where {Tf,Tm,N}
     size(fixed) == size(moving) || throw(DimensionMismatch("Size $(size(fixed)) of fixed is not equal to size $(size(moving)) of moving"))
     _mismatch0(zero(Float64), zero(Float64), fixed, moving; normalization=normalization)
 end
 
-function _mismatch0{T,Tf,Tm,N}(num::T, denom::T, fixed::AbstractArray{Tf,N}, moving::AbstractArray{Tm,N}; normalization = :intensity)
+function _mismatch0(num::T, denom::T, fixed::AbstractArray{Tf,N}, moving::AbstractArray{Tm,N}; normalization = :intensity) where {T,Tf,Tm,N}
     if normalization == :intensity
         for i in eachindex(fixed, moving)
             vf = T(fixed[i])
@@ -136,10 +138,10 @@ mismatch between `fixed` and `moving`, without any shift.  The
 mismatch is represented in `mms` as an aperture-wise
 Arrays-of-MismatchArrays.
 """
-function mismatch0{M<:MismatchArray}(mms::AbstractArray{M})
+function mismatch0(mms::AbstractArray{M}) where M<:MismatchArray
     mm0 = eltype(M)(0, 0)
     cr = eachindex(first(mms))
-    z = cr.start+cr.stop  # all-zeros CartesianIndex
+    z = first(cr)+last(cr)  # all-zeros CartesianIndex
     for mm in mms
         mm0 += mm[z]
     end
@@ -152,16 +154,16 @@ grid of aperture centers.  The grid has size `gridsize`, and is
 constructed for an image of spatial size `ssize`.  Along each
 dimension the first and last elements are at the image corners.
 """
-function aperture_grid{N}(ssize::Dims{N}, gridsize)
+function aperture_grid(ssize::Dims{N}, gridsize) where N
     if length(gridsize) != N
         if length(gridsize) == N-1
-            info("ssize and gridsize disagree; possible fix is to use a :time axis (AxisArrays) for the image")
+            @info("ssize and gridsize disagree; possible fix is to use a :time axis (AxisArrays) for the image")
         end
         error("ssize and gridsize must have the same length, got $ssize and $gridsize")
     end
-    grid = Array{NTuple{N,Float64},N}((gridsize...))
-    centers = map(i-> gridsize[i] > 1 ? collect(linspace(1,ssize[i],gridsize[i])) : [(ssize[i]+1)/2], 1:N)
-    for I in CartesianRange(size(grid))
+    grid = Array{NTuple{N,Float64},N}(undef, (gridsize...,))
+    centers = map(i-> gridsize[i] > 1 ? collect(range(1, stop=ssize[i], length=gridsize[i])) : [(ssize[i]+1)/2], 1:N)
+    for I in CartesianIndices(size(grid))
         grid[I] = ntuple(i->centers[i][I[i]], N)
     end
     grid
@@ -183,12 +185,12 @@ array-of-vectors) or an `N+1`-dimensional array with the center
 positions specified along the first dimension.  (But you may find the
 `gridsize` syntax to be simpler.)
 """
-function allocate_mmarrays{T,C<:Union{AbstractVector,Tuple}}(::Type{T}, aperture_centers::AbstractArray{C}, maxshift)
+function allocate_mmarrays(::Type{T}, aperture_centers::AbstractArray{C}, maxshift) where {T,C<:Union{AbstractVector,Tuple}}
     isempty(aperture_centers) && error("aperture_centers is empty")
     N = length(first(aperture_centers))
     sz = map(x->2*x+1, maxshift)
     mm = MismatchArray(T, sz...)
-    mms = Array{typeof(mm)}(size(aperture_centers))
+    mms = Array{typeof(mm)}(undef, size(aperture_centers))
     f = true
     for i in eachindex(mms)
         if f
@@ -201,9 +203,9 @@ function allocate_mmarrays{T,C<:Union{AbstractVector,Tuple}}(::Type{T}, aperture
     mms
 end
 
-function allocate_mmarrays{T,R<:Real}(::Type{T}, aperture_centers::AbstractArray{R}, maxshift)
+function allocate_mmarrays(::Type{T}, aperture_centers::AbstractArray{R}, maxshift) where {T,R<:Real}
     N = ndims(aperture_centers)-1
-    mms = Array{MismatchArray{T,N}}(size(aperture_centers)[2:end])
+    mms = Array{MismatchArray{T,N}}(undef, size(aperture_centers)[2:end])
     sz = map(x->2*x+1, maxshift)
     for i in eachindex(mms)
         mms[i] = MismatchArray(T, sz...)
@@ -211,8 +213,8 @@ function allocate_mmarrays{T,R<:Real}(::Type{T}, aperture_centers::AbstractArray
     mms
 end
 
-function allocate_mmarrays{T<:Real,N}(::Type{T}, gridsize::NTuple{N,Int}, maxshift)
-    mms = Array{MismatchArray{NumDenom{T},N}}(gridsize)
+function allocate_mmarrays(::Type{T}, gridsize::NTuple{N,Int}, maxshift) where {T<:Real,N}
+    mms = Array{MismatchArray{NumDenom{T},N}}(undef, gridsize)
     sz = map(x->2*x+1, maxshift)
     for i in eachindex(mms)
         mms[i] = MismatchArray(T, sz...)
@@ -220,26 +222,28 @@ function allocate_mmarrays{T<:Real,N}(::Type{T}, gridsize::NTuple{N,Int}, maxshi
     mms
 end
 
-immutable ContainerIterator{C}
+struct ContainerIterator{C}
     data::C
 end
 
-Base.start(iter::ContainerIterator) = start(iter.data)
-Base.done(iter::ContainerIterator, state) = done(iter.data, state)
-Base.next(iter::ContainerIterator, state) = next(iter.data, state)
+Base.iterate(iter::ContainerIterator) = iterate(iter.data)
+Base.iterate(iter::ContainerIterator, state) = iterate(iter.data, state)
 
-immutable FirstDimIterator{A<:AbstractArray,R<:CartesianRange}
+struct FirstDimIterator{A<:AbstractArray,R<:CartesianIndices}
     data::A
     rng::R
 
-    (::Type{FirstDimIterator{A,R}}){A,R}(data::A) = new{A,R}(data, CartesianRange(Base.tail(size(data))))
+    FirstDimIterator{A,R}(data::A) where {A,R} = new{A,R}(data, CartesianIndices(Base.tail(size(data))))
 end
-FirstDimIterator(A::AbstractArray) = FirstDimIterator{typeof(A),typeof(CartesianRange(Base.tail(size(A))))}(A)
-
-Base.start(iter::FirstDimIterator) = start(iter.rng)
-Base.done(iter::FirstDimIterator, state) = done(iter.rng, state)
-function Base.next(iter::FirstDimIterator, state)
-    index, state = next(iter.rng, state)
+FirstDimIterator(A::AbstractArray) = FirstDimIterator{typeof(A),typeof(CartesianIndices(Base.tail(size(A))))}(A)
+function Base.iterate(iter::FirstDimIterator)
+    isempty(iter.rng) && return nothing
+    index, state = iterate(iter.rng)
+    iter.data[:, index], state
+end
+function Base.iterate(iter::FirstDimIterator, state)
+    state == last(iter.rng) && return nothing
+    index, state = iterate(iter.rng, state)
     iter.data[:, index], state
 end
 
@@ -250,9 +254,9 @@ AbstractArray-of-tuples or -AbstractVectors, or may be an
 `AbstractArray` where each point is represented along the first
 dimension (e.g., columns of a matrix).
 """
-each_point{C<:Union{AbstractVector,Tuple}}(aperture_centers::AbstractArray{C}) = ContainerIterator(aperture_centers)
+each_point(aperture_centers::AbstractArray{C}) where {C<:Union{AbstractVector,Tuple}} = ContainerIterator(aperture_centers)
 
-each_point{R<:Real}(aperture_centers::AbstractArray{R}) = FirstDimIterator(aperture_centers)
+each_point(aperture_centers::AbstractArray{R}) where {R<:Real} = FirstDimIterator(aperture_centers)
 
 """
 `rng = aperture_range(center, width)` returns a tuple of
@@ -282,14 +286,14 @@ function default_aperture_width(img, gridsize::DimsLike, overlap::DimsLike = zer
     end
     gsz1 = max.(1, [gridsize...].-1)
     gflag = [gridsize...].>1
-    tuple((([size(img, sc...)...]-gflag)./gsz1+2*[overlap...].*gflag)...)
+    tuple((([map(d->size(img,d),sc)...]-gflag)./gsz1+2*[overlap...].*gflag)...)
 end
 
 """
 `truncatenoise!(mm, thresh)` zeros out any entries of the
 MismatchArray `mm` whose `denom` values are less than `thresh`.
 """
-function truncatenoise!{T<:Real}(mm::AbstractArray{NumDenom{T}}, thresh::Real)
+function truncatenoise!(mm::AbstractArray{NumDenom{T}}, thresh::Real) where T<:Real
     for I in eachindex(mm)
         if mm[I].denom <= thresh
             mm[I] = NumDenom{T}(0,0)
@@ -298,7 +302,7 @@ function truncatenoise!{T<:Real}(mm::AbstractArray{NumDenom{T}}, thresh::Real)
     mm
 end
 
-function truncatenoise!{A<:MismatchArray}(mms::AbstractArray{A}, thresh::Real)
+function truncatenoise!(mms::AbstractArray{A}, thresh::Real) where A<:MismatchArray
     for i = 1:length(denoms)
         truncatenoise!(mms[i], thresh)
     end
@@ -332,7 +336,7 @@ end
 
 function padranges(blocksize, maxshift)
     padright = [maxshift...]
-    transformdims = find(padright.>0)
+    transformdims = findall(padright.>0)
     paddedsz = [blocksize...] + 2*padright
     for i in transformdims
         # Pick a size for which one can efficiently calculate ffts
@@ -349,14 +353,14 @@ function padsize!(sz::Vector, blocksize, maxshift)
     sz
 end
 function padsize(blocksize, maxshift)
-    sz = Vector{Int}(length(blocksize))
+    sz = Vector{Int}(undef, length(blocksize))
     padsize!(sz, blocksize, maxshift)
 end
 
 function padsize(blocksize, maxshift, dim)
     m = maxshift[dim]
     p = blocksize[dim] + 2m
-    return m > 0 ? (dim == 1 ? nextpow2(p) : nextprod(FFTPROD, p)) : p   # we won't FFT along dimensions with maxshift[i]==0
+    return m > 0 ? (dim == 1 ? nextpow(2, p) : nextprod(FFTPROD, p)) : p   # we won't FFT along dimensions with maxshift[i]==0
 end
 
 function assertsamesize(A, B)
@@ -369,16 +373,16 @@ function issamesize(A::AbstractArray, B::AbstractArray)
     n = ndims(A)
     ndims(B) == n || return false
     for i = 1:n
-        indices(A, i) == indices(B, i) || return false
+        axes(A, i) == axes(B, i) || return false
     end
     true
 end
 
-function issamesize(A::AbstractArray, indexes)
+function issamesize(A::AbstractArray, indices)
     n = ndims(A)
-    length(indexes) == n || return false
+    length(indices) == n || return false
     for i = 1:n
-        size(A, i) == length(indexes[i]) || return false
+        size(A, i) == length(indices[i]) || return false
     end
     true
 end
@@ -387,7 +391,7 @@ safe_get!(dest::AbstractArray, src, isrc, default) = get!(dest, src, isrc, defau
 
 """
 `safe_get!(dest, src, isrc, default)` is a variant of `get!` that is
-safe for `src` SubArrays whose `indexes` may not be in-bounds.
+safe for `src` SubArrays whose `indices` may not be in-bounds.
 """
 function safe_get!(dest::AbstractArray, src::SubArray, isrc, default)
     # Trim the source region, ignoring bounds constraints
@@ -395,21 +399,21 @@ function safe_get!(dest::AbstractArray, src::SubArray, isrc, default)
     assertsamesize(dest, src2)
     # Determine the in-bounds region. If src slices some dimensions,
     # we need to skip over them.
-    newindexes = Vector{Any}(0)
-    sizehint!(newindexes, ndims(src2))
-    psize = Vector{Int}(0)
+    newindices = Vector{Any}()
+    sizehint!(newindices, ndims(src2))
+    psize = Vector{Int}()
     sizehint!(psize, ndims(src2))
-    for i = 1:length(src2.indexes)
-        j = src2.indexes[i]
+    for i = 1:length(src2.indices)
+        j = src2.indices[i]
         if !isa(j, Real)     # not a slice dimension
-            push!(newindexes, j)
+            push!(newindices, j)
             push!(psize, size(src2.parent, i))
         end
     end
-    idestcopy, _ = Base.indcopy(tuple(psize...), newindexes)
+    idestcopy, _ = Base.indcopy(tuple(psize...), newindices)
     if !issamesize(dest, idestcopy)
         fill!(dest, default)
-        dest[idestcopy...] = src2[idestcopy...]  # src2 is already shifted, so use dest indexes
+        dest[idestcopy...] = src2[idestcopy...]  # src2 is already shifted, so use dest indices
     else
         copy!(dest, sub(src2, idestcopy...))
     end
@@ -434,21 +438,16 @@ tovec(v::Tuple) = [v...]
 
 ### Utilities for unsafe indexing of views
 # TODO: redesign this whole thing to be safer?
-using Base: ViewIndex, to_indexes, unsafe_length, index_shape, tail
+using Base: ViewIndex, to_indices, unsafe_length, index_shape, tail
 
-if VERSION < v"0.6.0-dev"
-    @inline function extraunsafe_view{T,N}(V::SubArray{T,N}, I::Vararg{ViewIndex,N})
-        idxs = unsafe_reindex(V, V.indexes, to_indexes(I...))
-        SubArray(V.parent, idxs, map(unsafe_length, (index_shape(V.parent, idxs...))))
-    end
-else
-    @inline function extraunsafe_view{T,N}(V::SubArray{T,N}, I::Vararg{ViewIndex,N})
-        idxs = unsafe_reindex(V, V.indexes, to_indices(V, I))
-        SubArray(V.parent, idxs)
-    end
+@inline function extraunsafe_view(V::SubArray{T,N}, I::Vararg{ViewIndex,N}) where {T,N}
+    idxs = unsafe_reindex(V, V.indices, to_indices(V, I))
+    SubArray(V.parent, idxs)
 end
 
 unsafe_reindex(V, idxs::Tuple{UnitRange, Vararg{Any}}, subidxs::Tuple{UnitRange, Vararg{Any}}) =
     (Base.@_propagate_inbounds_meta; @inbounds new1 = idxs[1][subidxs[1]]; (new1, unsafe_reindex(V, tail(idxs), tail(subidxs))...))
 
 unsafe_reindex(V, idxs, subidxs) = Base.reindex(V, idxs, subidxs)
+
+end #module
