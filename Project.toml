@@ -6,3 +6,4 @@ version = "0.0.0"
 [deps]
 CenterIndexedArrays = "46a7138f-0d70-54e1-8ada-fb8296f91f24"
 RegisterCore = "67712758-55e7-5c3c-8e85-dda1d7758434"
+Images = "916415d5-f1e6-5110-898d-aaa5f9f070e0"

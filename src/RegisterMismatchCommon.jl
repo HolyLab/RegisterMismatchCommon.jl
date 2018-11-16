@@ -1,11 +1,16 @@
 module RegisterMismatchCommon
 
-using RegisterCore, CenterIndexedArrays
+using RegisterCore, CenterIndexedArrays, Images
 
 export correctbias!, nanpad, mismatch0, aperture_grid, allocate_mmarrays, default_aperture_width, truncatenoise!
+export DimsLike, WidthLike, each_point, aperture_range, assertsamesize, tovec, mismatch, padsize, set_FFTPROD
+export padranges, checksize_maxshift, safe_get!, register_translate
+
 
 const DimsLike = Union{AbstractVector{Int}, Dims}
 const WidthLike = Union{AbstractVector,Tuple}
+FFTPROD = [2,3]
+set_FFTPROD(v) = global FFTPROD = v
 
 mismatch(fixed::AbstractArray{T}, moving::AbstractArray{T}, maxshift::DimsLike; normalization = :intensity) where {T<:AbstractFloat} = mismatch(T, fixed, moving, maxshift; normalization=normalization)
 mismatch(fixed::AbstractArray, moving::AbstractArray, maxshift::DimsLike; normalization = :intensity) = mismatch(Float32, fixed, moving, maxshift; normalization=normalization)
