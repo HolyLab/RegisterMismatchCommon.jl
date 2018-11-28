@@ -450,8 +450,15 @@ using Base: ViewIndex, to_indices, unsafe_length, index_shape, tail
     SubArray(V.parent, idxs)
 end
 
+function get_index_wo_boundcheck(r::AbstractUnitRange, s::AbstractUnitRange{<:Integer}) # BlockRegistration issue #36
+    f = first(r)
+    st = oftype(f, f + first(s)-1)
+    range(st, length=length(s))
+end
+
 unsafe_reindex(V, idxs::Tuple{UnitRange, Vararg{Any}}, subidxs::Tuple{UnitRange, Vararg{Any}}) =
-    (Base.@_propagate_inbounds_meta; @inbounds new1 = idxs[1][subidxs[1]]; (new1, unsafe_reindex(V, tail(idxs), tail(subidxs))...))
+    (Base.@_propagate_inbounds_meta; @inbounds new1 = get_index_wo_boundcheck(idxs[1],subidxs[1]);
+     (new1, unsafe_reindex(V, tail(idxs), tail(subidxs))...))
 
 unsafe_reindex(V, idxs, subidxs) = Base.reindex(V, idxs, subidxs)
 
