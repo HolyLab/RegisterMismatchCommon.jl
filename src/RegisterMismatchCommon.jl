@@ -7,7 +7,7 @@ export DimsLike, WidthLike, each_point, aperture_range, assertsamesize, tovec, m
 export padranges, checksize_maxshift, safe_get!, register_translate
 
 
-const DimsLike = Union{AbstractVector{Int}, Dims}
+const DimsLike = Union{AbstractVector{Int}, Dims}   # try to avoid these and just use Dims tuples for sizes
 const WidthLike = Union{AbstractVector,Tuple}
 FFTPROD = [2,3]
 set_FFTPROD(v) = global FFTPROD = v
@@ -350,22 +350,11 @@ function padranges(blocksize, maxshift)
     rng = UnitRange{Int}[ 1-maxshift[i]:blocksize[i]+padright[i] for i = 1:length(blocksize) ]
 end
 
-function padsize!(sz::Vector, blocksize, maxshift)
-    n = length(blocksize)
-    for i = 1:n
-        sz[i] = padsize(blocksize, maxshift, i)
-    end
-    sz
-end
-function padsize(blocksize, maxshift)
-    sz = Vector{Int}(undef, length(blocksize))
-    padsize!(sz, blocksize, maxshift)
-end
+padsize(blocksize::Dims{N}, maxshift::Dims{N}) where N = map(padsize, blocksize, maxshift, ntuple(identity, Val(N)))
 
-function padsize(blocksize, maxshift, dim)
-    m = maxshift[dim]
-    p = blocksize[dim] + 2m
-    return m > 0 ? (dim == 1 ? nextpow(2, p) : nextprod(FFTPROD, p)) : p   # we won't FFT along dimensions with maxshift[i]==0
+function padsize(blocksize::Int, maxshift::Int, dim::Int)
+    p = blocksize + 2maxshift
+    return maxshift > 0 ? (dim == 1 ? nextpow(2, p) : nextprod(FFTPROD, p)) : p   # we won't FFT along dimensions with maxshift 0
 end
 
 function assertsamesize(A, B)
@@ -461,5 +450,27 @@ unsafe_reindex(V, idxs::Tuple{UnitRange, Vararg{Any}}, subidxs::Tuple{UnitRange,
      (new1, unsafe_reindex(V, tail(idxs), tail(subidxs))...))
 
 unsafe_reindex(V, idxs, subidxs) = Base.reindex(V, idxs, subidxs)
+
+### Deprecations
+
+function padsize(blocksize, maxshift)
+    Base.depwarn("padsize(::$(typeof(blocksize)), ::$(typeof(maxshift)) is deprecated, use Dims-tuples instead", :padsize)
+    sz = Vector{Int}(undef, length(blocksize))
+    padsize!(sz, blocksize, maxshift)
+end
+
+function padsize!(sz::Vector, blocksize, maxshift)
+    n = length(blocksize)
+    for i = 1:n
+        sz[i] = padsize(blocksize, maxshift, i)
+    end
+    sz
+end
+
+function padsize(blocksize, maxshift, dim)
+    m = maxshift[dim]
+    p = blocksize[dim] + 2m
+    return m > 0 ? (dim == 1 ? nextpow(2, p) : nextprod(FFTPROD, p)) : p   # we won't FFT along dimensions with maxshift[i]==0
+end
 
 end #module
