@@ -4,7 +4,7 @@ using RegisterCore, CenterIndexedArrays, Images
 
 export correctbias!, nanpad, mismatch0, aperture_grid, allocate_mmarrays, default_aperture_width, truncatenoise!
 export DimsLike, WidthLike, each_point, aperture_range, assertsamesize, tovec, mismatch, padsize, set_FFTPROD
-export padranges, checksize_maxshift, safe_get!, register_translate
+export padranges, shiftrange, checksize_maxshift, register_translate
 
 
 const DimsLike = Union{AbstractVector{Int}, Dims}   # try to avoid these and just use Dims tuples for sizes
@@ -381,39 +381,6 @@ function issamesize(A::AbstractArray, indices)
     true
 end
 
-safe_get!(dest::AbstractArray, src, isrc, default) = get!(dest, src, isrc, default)
-
-"""
-`safe_get!(dest, src, isrc, default)` is a variant of `get!` that is
-safe for `src` SubArrays whose `indices` may not be in-bounds.
-"""
-function safe_get!(dest::AbstractArray, src::SubArray, isrc, default)
-    # Trim the source region, ignoring bounds constraints
-    src2 = extraunsafe_view(src, isrc...)
-    assertsamesize(dest, src2)
-    # Determine the in-bounds region. If src slices some dimensions,
-    # we need to skip over them.
-    newindices = Vector{Any}()
-    sizehint!(newindices, ndims(src2))
-    psize = Vector{Int}()
-    sizehint!(psize, ndims(src2))
-    for i = 1:length(src2.indices)
-        j = src2.indices[i]
-        if !isa(j, Real)     # not a slice dimension
-            push!(newindices, j)
-            push!(psize, size(src2.parent, i))
-        end
-    end
-    idestcopy, _ = Base.indcopy(tuple(psize...), newindices)
-    if !issamesize(dest, idestcopy)
-        fill!(dest, default)
-        dest[idestcopy...] = src2[idestcopy...]  # src2 is already shifted, so use dest indices
-    else
-        copy!(dest, sub(src2, idestcopy...))
-    end
-    dest
-end
-
 # This yields the _effective_ overlap, i.e., sets to zero if gridsize==1 along a coordinate
 # imgssz = image spatial size
 function computeoverlap(imgssz, blocksize, gridsize)
@@ -429,6 +396,7 @@ rightedge(center, width) = leftedge(center+width, width) - 1
 tovec(v::AbstractVector) = v
 tovec(v::Tuple) = [v...]
 
+shiftrange(r, s) = r .+ s
 
 ### Utilities for unsafe indexing of views
 # TODO: redesign this whole thing to be safer?
