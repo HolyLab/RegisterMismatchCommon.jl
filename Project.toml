@@ -1,12 +1,18 @@
 name = "RegisterMismatchCommon"
 uuid = "abb2e897-52bf-5d28-a379-6ca321e3b878"
 authors = ["Tim Holy <tim.holy@gmail.com>"]
-version = "0.2.0"
+version = "0.2.1"
 
 [deps]
 CenterIndexedArrays = "46a7138f-0d70-54e1-8ada-fb8296f91f24"
+ImageCore = "a09fc81d-aa75-5fe9-8630-4744c3626534"
 RegisterCore = "67712758-55e7-5c3c-8e85-dda1d7758434"
-Images = "916415d5-f1e6-5110-898d-aaa5f9f070e0"
+
+[compat]
+CenterIndexedArrays = "0.2"
+ImageCore = "0.8.1"
+RegisterCore = "0.2"
+julia = "1.1"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
