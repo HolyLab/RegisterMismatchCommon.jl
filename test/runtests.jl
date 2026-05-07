@@ -1,5 +1,6 @@
 using Test
 using Aqua
+using Documenter
 using ExplicitImports
 import RegisterMismatchCommon
 using RegisterMismatchCommon
@@ -7,7 +8,12 @@ using RegisterCore: MismatchArray, NumDenom, maxshift, separate
 
 # Tests are in RegisterMismatch and RegisterMismatchCuda
 
+DocMeta.setdocmeta!(RegisterMismatchCommon, :DocTestSetup, :(using RegisterMismatchCommon); recursive=true)
+
 @testset "RegisterMismatchCommon" begin
+    @testset "Doctests" begin
+        doctest(RegisterMismatchCommon; manual=false)
+    end
     Aqua.test_all(RegisterMismatchCommon)
     @testset "ExplicitImports" begin
         test_explicit_imports(RegisterMismatchCommon)
