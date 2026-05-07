@@ -1,6 +1,8 @@
 module RegisterMismatchCommon
 
-using RegisterCore, CenterIndexedArrays, ImageCore
+using CenterIndexedArrays: CenterIndexedArrays, CenterIndexedArray
+using ImageCore: ImageCore, coords_spatial, sdims
+using RegisterCore: RegisterCore, MismatchArray, NumDenom, indmin_mismatch, maxshift, separate
 
 export correctbias!, nanpad, mismatch0, aperture_grid, allocate_mmarrays, default_aperture_width, truncatenoise!
 export DimsLike, WidthLike, each_point, aperture_range, assertsamesize, tovec, mismatch, padsize, set_FFTPROD
@@ -400,9 +402,9 @@ shiftrange(r, s) = r .+ s
 
 ### Utilities for unsafe indexing of views
 # TODO: redesign this whole thing to be safer?
-using Base: ViewIndex, to_indices, unsafe_length, index_shape, tail
+using Base: to_indices, tail
 
-@inline function extraunsafe_view(V::SubArray{T, N}, I::Vararg{ViewIndex, N}) where {T, N}
+@inline function extraunsafe_view(V::SubArray{T, N}, I::Vararg{Union{Real, AbstractArray}, N}) where {T, N}
     idxs = unsafe_reindex(V, V.indices, to_indices(V, I))
     return SubArray(V.parent, idxs)
 end
@@ -415,11 +417,17 @@ end
 
 unsafe_reindex(V, idxs::Tuple{UnitRange, Vararg{Any}}, subidxs::Tuple{UnitRange, Vararg{Any}}) =
     (
-    Base.@_propagate_inbounds_meta; @inbounds new1 = get_index_wo_boundcheck(idxs[1], subidxs[1]);
+    @inbounds new1 = get_index_wo_boundcheck(idxs[1], subidxs[1]);
     (new1, unsafe_reindex(V, tail(idxs), tail(subidxs))...)
 )
 
-unsafe_reindex(V, idxs, subidxs) = Base.reindex(V, idxs, subidxs)
+# Scalar indices in idxs are dropped dimensions — pass through without consuming a subindex
+unsafe_reindex(V, idxs::Tuple{Real, Vararg{Any}}, subidxs::Tuple) =
+    (idxs[1], unsafe_reindex(V, tail(idxs), subidxs)...)
+# AbstractArray indices: map subindex through the stored index
+unsafe_reindex(V, idxs::Tuple{AbstractArray, Vararg{Any}}, subidxs::Tuple{Any, Vararg{Any}}) =
+    (@inbounds new1 = idxs[1][subidxs[1]]; (new1, unsafe_reindex(V, tail(idxs), tail(subidxs))...))
+unsafe_reindex(V, ::Tuple{}, ::Tuple{}) = ()
 
 function padsize(blocksize, maxshift, dim)
     m = maxshift[dim]

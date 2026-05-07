@@ -11,14 +11,16 @@ RegisterCore = "67712758-55e7-5c3c-8e85-dda1d7758434"
 [compat]
 Aqua = "0.8"
 CenterIndexedArrays = "0.2, 1"
-Test = "1"
+ExplicitImports = "1"
 ImageCore = "0.8.1, 0.9, 0.10"
 RegisterCore = "0.2, 1"
+Test = "1"
 julia = "1.10"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+ExplicitImports = "7d51a73a-1435-4ff3-83d9-f097790105c7"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "Test"]
+test = ["Aqua", "ExplicitImports", "Test"]
