@@ -421,22 +421,6 @@ unsafe_reindex(V, idxs::Tuple{UnitRange, Vararg{Any}}, subidxs::Tuple{UnitRange,
 
 unsafe_reindex(V, idxs, subidxs) = Base.reindex(V, idxs, subidxs)
 
-### Deprecations
-
-function padsize(blocksize, maxshift)
-    Base.depwarn("padsize(::$(typeof(blocksize)), ::$(typeof(maxshift)) is deprecated, use Dims-tuples instead", :padsize)
-    sz = Vector{Int}(undef, length(blocksize))
-    return padsize!(sz, blocksize, maxshift)
-end
-
-function padsize!(sz::Vector, blocksize, maxshift)
-    n = length(blocksize)
-    for i in 1:n
-        sz[i] = padsize(blocksize, maxshift, i)
-    end
-    return sz
-end
-
 function padsize(blocksize, maxshift, dim)
     m = maxshift[dim]
     p = blocksize[dim] + 2m
