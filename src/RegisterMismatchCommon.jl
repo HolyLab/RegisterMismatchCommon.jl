@@ -18,7 +18,7 @@ module RegisterMismatchCommon
 
 using CenterIndexedArrays: CenterIndexedArrays, CenterIndexedArray
 using ImageCore: ImageCore, coords_spatial, sdims
-using RegisterCore: RegisterCore, MismatchArray, NumDenom, indmin_mismatch, maxshift, separate
+using RegisterCore: RegisterCore, MismatchArray, NumDenom, argmin_mismatch, maxshift, separate
 
 export correctbias!, nanpad, mismatch0, aperture_grid, allocate_mmarrays, default_aperture_width, truncatenoise!
 export DimsLike, WidthLike, each_point, aperture_range, assertsamesize, tovec, mismatch, padsize, set_FFTPROD
@@ -461,7 +461,7 @@ function register_translate(fixed, moving, maxshift, thresh = nothing)
     if thresh == nothing
         thresh = 0.25maximum(denom)
     end
-    return indmin_mismatch(mm, thresh)
+    return argmin_mismatch(mm, thresh)
 end
 
 
