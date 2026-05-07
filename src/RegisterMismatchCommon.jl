@@ -347,9 +347,9 @@ struct FirstDimIterator{A <: AbstractArray, R <: CartesianIndices}
     data::A
     rng::R
 
-    FirstDimIterator{A, R}(data::A) where {A, R} = new{A, R}(data, CartesianIndices(Base.tail(size(data))))
+    FirstDimIterator{A, R}(data::A) where {A, R} = new{A, R}(data, CartesianIndices(size(data)[2:end]))
 end
-FirstDimIterator(A::AbstractArray) = FirstDimIterator{typeof(A), typeof(CartesianIndices(Base.tail(size(A))))}(A)
+FirstDimIterator(A::AbstractArray) = FirstDimIterator{typeof(A), typeof(CartesianIndices(size(A)[2:end]))}(A)
 Base.length(iter::FirstDimIterator) = length(iter.rng)
 Base.eltype(::Type{FirstDimIterator{A, R}}) where {A, R} = Vector{eltype(A)}
 function Base.iterate(iter::FirstDimIterator)
@@ -583,7 +583,8 @@ shiftrange(r, s) = r .+ s
 
 ### Utilities for unsafe indexing of views
 # TODO: redesign this whole thing to be safer?
-using Base: to_indices, tail
+using Base: to_indices
+_tail(t::Tuple) = t[2:end]
 
 @inline function extraunsafe_view(V::SubArray{T, N}, I::Vararg{Union{Real, AbstractArray}, N}) where {T, N}
     idxs = unsafe_reindex(V, V.indices, to_indices(V, I))
@@ -599,15 +600,15 @@ end
 unsafe_reindex(V, idxs::Tuple{UnitRange, Vararg{Any}}, subidxs::Tuple{UnitRange, Vararg{Any}}) =
     (
     @inbounds new1 = get_index_wo_boundcheck(idxs[1], subidxs[1]);
-    (new1, unsafe_reindex(V, tail(idxs), tail(subidxs))...)
+    (new1, unsafe_reindex(V, _tail(idxs), _tail(subidxs))...)
 )
 
 # Scalar indices in idxs are dropped dimensions — pass through without consuming a subindex
 unsafe_reindex(V, idxs::Tuple{Real, Vararg{Any}}, subidxs::Tuple) =
-    (idxs[1], unsafe_reindex(V, tail(idxs), subidxs)...)
+    (idxs[1], unsafe_reindex(V, _tail(idxs), subidxs)...)
 # AbstractArray indices: map subindex through the stored index
 unsafe_reindex(V, idxs::Tuple{AbstractArray, Vararg{Any}}, subidxs::Tuple{Any, Vararg{Any}}) =
-    (@inbounds new1 = idxs[1][subidxs[1]]; (new1, unsafe_reindex(V, tail(idxs), tail(subidxs))...))
+    (@inbounds new1 = idxs[1][subidxs[1]]; (new1, unsafe_reindex(V, _tail(idxs), _tail(subidxs))...))
 unsafe_reindex(V, ::Tuple{}, ::Tuple{}) = ()
 
 function padsize(blocksize, maxshift, dim)
