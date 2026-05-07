@@ -1,3 +1,19 @@
+"""
+RegisterMismatchCommon provides shared types, utilities, and aperture-based
+workflow helpers for image-registration mismatch computation.  Concrete
+`mismatch` implementations are supplied by downstream packages:
+`RegisterMismatch` (CPU/FFTW) and `RegisterMismatchCuda` (GPU/CUFFT).
+
+Main entry points:
+- [`mismatch`](@ref): full-array mismatch between two images
+- [`mismatch_apertures`](@ref): aperture-wise mismatch on a grid
+- [`register_translate`](@ref): find the best integer translation
+
+Aperture workflow helpers: [`aperture_grid`](@ref), [`allocate_mmarrays`](@ref),
+[`default_aperture_width`](@ref), [`aperture_range`](@ref).
+
+Post-processing: [`correctbias!`](@ref), [`truncatenoise!`](@ref), [`mismatch0`](@ref).
+"""
 module RegisterMismatchCommon
 
 using CenterIndexedArrays: CenterIndexedArrays, CenterIndexedArray
@@ -9,11 +25,59 @@ export DimsLike, WidthLike, each_point, aperture_range, assertsamesize, tovec, m
 export padranges, shiftrange, checksize_maxshift, register_translate
 
 
-const DimsLike = Union{AbstractVector{Int}, Dims}   # try to avoid these and just use Dims tuples for sizes
+"""
+    const DimsLike = Union{AbstractVector{Int}, Dims}
+
+Type alias accepted wherever dimension sizes can be passed.
+
+!!! note
+    Prefer `Dims` tuples (e.g. `(128, 128)`) over `AbstractVector{Int}` where
+    possible; tuple inputs carry dimensionality in the type, which enables
+    more precise dispatch and avoids runtime length checks.
+"""
+const DimsLike = Union{AbstractVector{Int}, Dims}
+
+"""
+    const WidthLike = Union{AbstractVector, Tuple}
+
+Type alias for values that specify aperture widths — accepted as either a
+`Tuple` or an `AbstractVector`.
+"""
 const WidthLike = Union{AbstractVector, Tuple}
+
 FFTPROD = [2, 3]
+
+"""
+    set_FFTPROD(v)
+
+Set the global list of prime factors used when selecting FFT-friendly array
+sizes.  The default is `[2, 3]`, meaning padded sizes are products of powers
+of 2 and 3.
+
+This setting affects `padsize` and `padranges`.
+
+# Example
+```julia
+set_FFTPROD([2, 3, 5])  # allow sizes of the form 2^a * 3^b * 5^c
+```
+"""
 set_FFTPROD(v) = global FFTPROD = v
 
+"""
+    mismatch(fixed, moving, maxshift; normalization=:intensity) -> MismatchArray
+
+Compute the mismatch between `fixed` and `moving` for all integer shifts up to
+`maxshift`.
+
+Returns a `MismatchArray` of `NumDenom` values indexed from `-maxshift` to
+`+maxshift` along each dimension.  `normalization` may be `:intensity`
+(default) or `:pixels`.
+
+!!! note
+    This function dispatches to a concrete implementation that must be provided
+    by a downstream package such as `RegisterMismatch` (CPU) or
+    `RegisterMismatchCuda` (GPU).
+"""
 mismatch(fixed::AbstractArray{T}, moving::AbstractArray{T}, maxshift::DimsLike; normalization = :intensity) where {T <: AbstractFloat} = mismatch(T, fixed, moving, maxshift; normalization = normalization)
 mismatch(fixed::AbstractArray, moving::AbstractArray, maxshift::DimsLike; normalization = :intensity) = mismatch(Float32, fixed, moving, maxshift; normalization = normalization)
 
@@ -28,15 +92,19 @@ function mismatch_apertures(::Type{T}, fixed::AbstractArray, moving::AbstractArr
 end
 
 """
-`correctbias!(mm::MismatchArray)` replaces "suspect" mismatch
-data with imputed data.  If each pixel in your camera has a different
-bias, then matching that bias becomes an incentive to avoid
-shifts.  Likewise, CMOS cameras tend to have correlated row/column
-noise. These two factors combine to imply that `mm[i,j,...]` is unreliable
-whenever `i` or `j` is zero.
+    correctbias!(mm::MismatchArray[, w]) -> mm
+    correctbias!(mms::AbstractArray{<:MismatchArray}) -> mms
 
-Data are imputed by averaging the adjacent non-suspect values.  This
-function works in-place, overwriting the original `mm`.
+Replace "suspect" mismatch entries with values imputed from their neighbors.
+
+Camera pixel-to-pixel bias and CMOS row/column noise create a spurious
+incentive to avoid shifts, because `mm[i,j,...]` is unreliable whenever
+`i` or `j` is zero (along the first two spatial dimensions).  Suspect
+entries are identified via weight array `w` (zero = suspect; default
+computed by `correctbias_weight`), and replaced by a weighted average of
+adjacent non-suspect values.
+
+Both forms modify their first argument in place and return it.
 """
 function correctbias!(mm::MismatchArray{ND, N}, w = correctbias_weight(mm)) where {ND, N}
     T = eltype(ND)
@@ -63,7 +131,6 @@ function correctbias!(mm::MismatchArray{ND, N}, w = correctbias_weight(mm)) wher
     return mm
 end
 
-"`correctbias!(mms)` runs `correctbias!` on each element of an array-of-MismatchArrays."
 function correctbias!(mms::AbstractArray{M}) where {M <: MismatchArray}
     for mm in mms
         correctbias!(mm)
@@ -87,9 +154,19 @@ function correctbias_weight(mm::MismatchArray{ND, N}) where {ND, N}
 end
 
 """
-`fixedpad, movingpad = nanpad(fixed, moving)` will pad `fixed` and/or
-`moving` with NaN as needed to ensure that `fixedpad` and `movingpad`
-have the same size.
+    fixedpad, movingpad = nanpad(fixed, moving)
+
+Pad `fixed` and/or `moving` with `NaN` so that both outputs have the same
+size.
+
+If `fixed` and `moving` already have the same size they are returned unchanged.
+Otherwise each is expanded along every dimension to
+`max(size(fixed, d), size(moving, d))`, padding out-of-bounds positions with
+`NaN`.
+
+The element type of the outputs is `promote_type(eltype(fixed), eltype(moving))`.
+For non-floating-point inputs this promotes to at least `Float32` (the smallest
+float type that can represent `NaN`).
 """
 function nanpad(fixed, moving)
     ndims(fixed) == ndims(moving) || error("fixed and moving must have the same dimensionality")
@@ -105,9 +182,16 @@ nanval(::Type{T}) where {T <: AbstractFloat} = convert(T, NaN)
 nanval(::Type{T}) where {T} = convert(Float32, NaN)
 
 """
-`mm0 = mismatch0(fixed, moving, [normalization])` computes the
-"as-is" mismatch between `fixed` and `moving`, without any shift.
-`normalization` may be either `:intensity` (the default) or `:pixels`.
+    mm0 = mismatch0(fixed, moving; normalization=:intensity) -> NumDenom{Float64}
+
+Compute the "as-is" mismatch between `fixed` and `moving` at zero shift.
+
+`normalization` may be `:intensity` (default, normalizes by `vf² + vm²`) or
+`:pixels` (normalizes by the count of finite pixel pairs).  Returns a
+`NumDenom{Float64}`; the ratio `mm0.num / mm0.denom` gives the normalized
+mismatch.
+
+See also: [`mismatch0(mms)`](@ref mismatch0(::AbstractArray)).
 """
 function mismatch0(fixed::AbstractArray{Tf, N}, moving::AbstractArray{Tm, N}; normalization = :intensity) where {Tf, Tm, N}
     size(fixed) == size(moving) || throw(DimensionMismatch("Size $(size(fixed)) of fixed is not equal to size $(size(moving)) of moving"))
@@ -140,10 +224,13 @@ function _mismatch0(num::T, denom::T, fixed::AbstractArray{Tf, N}, moving::Abstr
 end
 
 """
-`mm0 = mismatch0(mms)` computes the "as-is"
-mismatch between `fixed` and `moving`, without any shift.  The
-mismatch is represented in `mms` as an aperture-wise
-Arrays-of-MismatchArrays.
+    mm0 = mismatch0(mms::AbstractArray{<:MismatchArray}) -> NumDenom
+
+Extract and sum the zero-shift `NumDenom` from each element of an
+aperture-wise array-of-`MismatchArray`s, returning a single `NumDenom`
+representing the overall as-is mismatch.
+
+See also: [`mismatch0(fixed, moving)`](@ref mismatch0(::AbstractArray, ::AbstractArray)).
 """
 function mismatch0(mms::AbstractArray{M}) where {M <: MismatchArray}
     mm0 = eltype(M)(0, 0)
@@ -156,10 +243,29 @@ function mismatch0(mms::AbstractArray{M}) where {M <: MismatchArray}
 end
 
 """
-`ag = aperture_grid(ssize, gridsize)` constructs a uniformly-spaced
-grid of aperture centers.  The grid has size `gridsize`, and is
-constructed for an image of spatial size `ssize`.  Along each
-dimension the first and last elements are at the image corners.
+    ag = aperture_grid(ssize, gridsize) -> Array{NTuple{N,Float64},N}
+
+Construct a uniformly-spaced grid of aperture centers for an image of spatial
+size `ssize`.
+
+The returned array has size `gridsize` and element type `NTuple{N,Float64}`.
+Along each dimension, centers are linearly spaced between 1 and `ssize[d]`
+(inclusive).  When `gridsize[d] == 1`, the single center is placed at the
+midpoint `(ssize[d] + 1) / 2`.
+
+# Examples
+```jldoctest
+julia> ag = aperture_grid((256, 256), (4, 4));
+
+julia> size(ag)
+(4, 4)
+
+julia> ag[1, 1]
+(1.0, 1.0)
+
+julia> ag[4, 4]
+(256.0, 256.0)
+```
 """
 function aperture_grid(ssize::Dims{N}, gridsize) where {N}
     if length(gridsize) != N
@@ -177,20 +283,19 @@ function aperture_grid(ssize::Dims{N}, gridsize) where {N}
 end
 
 """
-`mms = allocate_mmarrays(T, gridsize, maxshift)` allocates storage for
-aperture-wise mismatch computation. `mms` will be an
-Array-of-MismatchArrays with element type `NumDenom{T}` and half-size
-`maxshift`. `mms` will be an array of size `gridsize`. This syntax is
-recommended when your apertures are centered at points of a grid.
+    mms = allocate_mmarrays(T, gridsize::NTuple, maxshift) -> Array{MismatchArray{NumDenom{T},N},N}
+    mms = allocate_mmarrays(T, aperture_centers, maxshift) -> Array{MismatchArray{NumDenom{T},N}}
 
-`mms = allocate_mmarrays(T, aperture_centers, maxshift)` returns `mms`
-with a shape that matches that of `aperture_centers`. The centers can
-in general be provided as an vector-of-tuples, vector-of-vectors, or a
-matrix with each point in a column.  If your centers are arranged in a
-rectangular grid, you can use an `N`-dimensional array-of-tuples (or
-array-of-vectors) or an `N+1`-dimensional array with the center
-positions specified along the first dimension.  (But you may find the
-`gridsize` syntax to be simpler.)
+Allocate an array of `MismatchArray{NumDenom{T}}` objects, each with half-size `maxshift`.
+
+**`gridsize` form** (recommended for regular grids): `mms` is an `N`-dimensional
+array of size `gridsize`.
+
+**`aperture_centers` form**: `mms` matches the shape of `aperture_centers`. Centers
+may be provided as:
+- An array of tuples or `AbstractVector`s: `mms` has the same shape.
+- An `AbstractMatrix{<:Real}` where each column encodes one point: `mms` has shape
+  `size(aperture_centers)[2:end]`, i.e., one entry per column.
 """
 function allocate_mmarrays(::Type{T}, aperture_centers::AbstractArray{C}, maxshift) where {T, C <: Union{AbstractVector, Tuple}}
     isempty(aperture_centers) && error("aperture_centers is empty")
@@ -259,11 +364,14 @@ function Base.iterate(iter::FirstDimIterator, state)
 end
 
 """
-`iter = each_point(points)` yields an iterator `iter` over all the
-points in `points`. `points` may be represented as an
-AbstractArray-of-tuples or -AbstractVectors, or may be an
-`AbstractArray` where each point is represented along the first
-dimension (e.g., columns of a matrix).
+    iter = each_point(points)
+
+Return an iterator over the points in `points`.
+
+`points` may be:
+- An `AbstractArray` of tuples or `AbstractVector`s: each element is yielded as-is.
+- An `AbstractArray{<:Real}` where points are laid out along the first dimension
+  (e.g., columns of a matrix): each point is yielded as a `Vector`.
 """
 each_point(aperture_centers::AbstractArray{C}) where {C <: Union{AbstractVector, Tuple}} = ContainerIterator(aperture_centers)
 
@@ -280,12 +388,17 @@ function aperture_range(center, width)
 end
 
 """
-`aperturesize = default_aperture_width(img, gridsize, [overlap])`
-calculates the aperture width for a regularly-spaced grid of aperture
-centers with size `gridsize`.  Apertures that are adjacent along
-dimension `d` may overlap by a number pixels specified by
-`overlap[d]`; the default value is 0.  For non-negative `overlap`, the
-collection of apertures will yield full coverage of the image.
+    aperturesize = default_aperture_width(img, gridsize[, overlap]) -> NTuple{N,Float64}
+
+Compute the aperture width for a regularly-spaced grid of aperture centers
+with size `gridsize` over image `img`.
+
+`overlap` is a `DimsLike` giving the number of pixels by which adjacent
+apertures overlap along each spatial dimension; it defaults to zero in every
+dimension.  For non-negative `overlap`, the collection of apertures provides
+full coverage of the image.
+
+Returns a `Tuple` of `Float64` widths, one per spatial dimension.
 """
 function default_aperture_width(img, gridsize::DimsLike, overlap::DimsLike = zeros(Int, sdims(img)))
     sc = coords_spatial(img)
@@ -301,8 +414,13 @@ function default_aperture_width(img, gridsize::DimsLike, overlap::DimsLike = zer
 end
 
 """
-`truncatenoise!(mm, thresh)` zeros out any entries of the
-MismatchArray `mm` whose `denom` values are less than `thresh`.
+    truncatenoise!(mm::AbstractArray{NumDenom{T}}, thresh) -> mm
+    truncatenoise!(mms::AbstractArray{<:MismatchArray}, thresh) -> mms
+
+Zero out entries whose `denom` is ≤ `thresh`, replacing them with
+`NumDenom(0, 0)`.
+
+Both forms modify their first argument in place and return it.
 """
 function truncatenoise!(mm::AbstractArray{NumDenom{T}}, thresh::Real) where {T <: Real}
     for I in eachindex(mm)
@@ -321,11 +439,21 @@ function truncatenoise!(mms::AbstractArray{A}, thresh::Real) where {A <: Mismatc
 end
 
 """
-`shift = register_translate(fixed, moving, maxshift, [thresh])`
-computes the integer-valued translation which best aligns images
-`fixed` and `moving`. All shifts up to size `maxshift` are considered.
-Optionally specify `thresh`, the fraction (0<=thresh<=1) of overlap
-required between `fixed` and `moving` (default 0.25).
+    shift = register_translate(fixed, moving, maxshift[, thresh]) -> CartesianIndex
+
+Compute the integer-valued translation that best aligns `fixed` and `moving`.
+All shifts up to `maxshift` (in each dimension) are considered.
+
+`thresh` sets the minimum `denom` value for a mismatch entry to be considered
+reliable.  Entries with `denom ≤ thresh` are excluded from the search.  The
+default is `0.25 * maximum(denom)`, i.e., entries whose denominator falls
+below 25% of the peak denominator are excluded.
+
+Returns a `CartesianIndex` of the best integer shift.
+
+!!! note
+    Requires a concrete `mismatch` implementation to be loaded, e.g. from
+    `RegisterMismatch` (CPU) or `RegisterMismatchCuda` (GPU).
 """
 function register_translate(fixed, moving, maxshift, thresh = nothing)
     mm = mismatch(fixed, moving, maxshift)
@@ -337,6 +465,15 @@ function register_translate(fixed, moving, maxshift, thresh = nothing)
 end
 
 
+"""
+    checksize_maxshift(A, maxshift)
+
+Validate that array `A` has the size expected for a mismatch array with the
+given `maxshift`.  Checks that `size(A, d) == 2maxshift[d] + 1` for every
+dimension `d`.
+
+Throws an `ErrorException` on failure; returns `nothing` on success.
+"""
 function checksize_maxshift(A::AbstractArray, maxshift)
     ndims(A) == length(maxshift) || error("Array is $(ndims(A))-dimensional, but maxshift has length $(length(maxshift))")
     for i in 1:ndims(A)
@@ -345,6 +482,16 @@ function checksize_maxshift(A::AbstractArray, maxshift)
     return nothing
 end
 
+"""
+    padranges(blocksize, maxshift) -> Vector{UnitRange{Int}}
+
+Compute padded index ranges for an FFT-based cross-correlation.
+
+For each dimension `d`, returns a `UnitRange{Int}` that covers the block
+`1:blocksize[d]` and is extended symmetrically by `maxshift[d]`, then rounded
+up to an FFT-friendly length via `padsize`.  Ranges start at `1 - maxshift[d]`
+to accommodate negative shifts.
+"""
 function padranges(blocksize, maxshift)
     padright = [maxshift...]
     transformdims = findall(padright .> 0)
@@ -356,6 +503,20 @@ function padranges(blocksize, maxshift)
     return rng = UnitRange{Int}[ (1 - maxshift[i]):(blocksize[i] + padright[i]) for i in 1:length(blocksize) ]
 end
 
+"""
+    padsize(blocksize, maxshift, dim) -> Int
+    padsize(blocksize::Dims, maxshift::Dims) -> Dims
+
+Compute the padded FFT size.
+
+The single-dimension form returns the smallest integer ≥ `blocksize + 2maxshift`
+that is efficient for FFT computation: a power of 2 along dimension 1, and a
+product of `FFTPROD` primes along other dimensions.  When `maxshift == 0`,
+the input size is returned unchanged (that dimension will not be transformed).
+
+The multi-dimension form applies `padsize` independently to each dimension and
+returns a tuple of padded sizes.
+"""
 padsize(blocksize::Dims{N}, maxshift::Dims{N}) where {N} = map(padsize, blocksize, maxshift, ntuple(identity, Val(N)))
 
 function padsize(blocksize::Int, maxshift::Int, dim::Int)
@@ -363,6 +524,12 @@ function padsize(blocksize::Int, maxshift::Int, dim::Int)
     return maxshift > 0 ? (dim == 1 ? nextpow(2, p) : nextprod(FFTPROD, p)) : p   # we won't FFT along dimensions with maxshift 0
 end
 
+"""
+    assertsamesize(A, B)
+
+Throw an `ErrorException` if `A` and `B` do not have the same axes along every
+dimension.  Returns `nothing` on success.
+"""
 function assertsamesize(A, B)
     return if !issamesize(A, B)
         error("Arrays are not the same size")
@@ -398,10 +565,20 @@ end
 leftedge(center, width) = ceil(Int, center - width / 2)
 rightedge(center, width) = leftedge(center + width, width) - 1
 
-# These avoid making a copy if it's not necessary
+"""
+    tovec(v) -> AbstractVector
+
+Convert `v` to an `AbstractVector`, returning `v` unchanged if it is already
+an `AbstractVector` (no copy), or converting a `Tuple` to a `Vector`.
+"""
 tovec(v::AbstractVector) = v
 tovec(v::Tuple) = [v...]
 
+"""
+    shiftrange(r, s)
+
+Shift the range `r` by scalar `s`, returning `r .+ s`.
+"""
 shiftrange(r, s) = r .+ s
 
 ### Utilities for unsafe indexing of views
