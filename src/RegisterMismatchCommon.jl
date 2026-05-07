@@ -210,9 +210,9 @@ function allocate_mmarrays(::Type{T}, aperture_centers::AbstractArray{C}, maxshi
     return mms
 end
 
-function allocate_mmarrays(::Type{T}, aperture_centers::AbstractArray{R}, maxshift) where {T, R <: Real}
+function allocate_mmarrays(::Type{T}, aperture_centers::AbstractArray{R}, maxshift) where {T <: Real, R <: Real}
     N = ndims(aperture_centers) - 1
-    mms = Array{MismatchArray{T, N}}(undef, size(aperture_centers)[2:end])
+    mms = Array{MismatchArray{NumDenom{T}, N}}(undef, size(aperture_centers)[2:end])
     sz = map(x -> 2 * x + 1, maxshift)
     for i in eachindex(mms)
         mms[i] = MismatchArray(T, sz...)
@@ -235,6 +235,8 @@ end
 
 Base.iterate(iter::ContainerIterator) = iterate(iter.data)
 Base.iterate(iter::ContainerIterator, state) = iterate(iter.data, state)
+Base.length(iter::ContainerIterator) = length(iter.data)
+Base.eltype(::Type{ContainerIterator{C}}) where {C} = eltype(C)
 
 struct FirstDimIterator{A <: AbstractArray, R <: CartesianIndices}
     data::A
@@ -243,6 +245,8 @@ struct FirstDimIterator{A <: AbstractArray, R <: CartesianIndices}
     FirstDimIterator{A, R}(data::A) where {A, R} = new{A, R}(data, CartesianIndices(Base.tail(size(data))))
 end
 FirstDimIterator(A::AbstractArray) = FirstDimIterator{typeof(A), typeof(CartesianIndices(Base.tail(size(A))))}(A)
+Base.length(iter::FirstDimIterator) = length(iter.rng)
+Base.eltype(::Type{FirstDimIterator{A, R}}) where {A, R} = Vector{eltype(A)}
 function Base.iterate(iter::FirstDimIterator)
     isempty(iter.rng) && return nothing
     index, state = iterate(iter.rng)
@@ -288,7 +292,7 @@ function default_aperture_width(img, gridsize::DimsLike, overlap::DimsLike = zer
     length(sc) == length(gridsize) == length(overlap) || error("gridsize and overlap must have length equal to the number of spatial dimensions in img")
     for i in 1:length(sc)
         if gridsize[i] > size(img, sc[i])
-            error("gridsize $gridsize is too large, given the size $(size(img)[sc]) of the image")
+            error("gridsize $gridsize is too large, given the size $(map(d -> size(img, d), sc)) of the image")
         end
     end
     gsz1 = max.(1, [gridsize...] .- 1)
@@ -310,10 +314,10 @@ function truncatenoise!(mm::AbstractArray{NumDenom{T}}, thresh::Real) where {T <
 end
 
 function truncatenoise!(mms::AbstractArray{A}, thresh::Real) where {A <: MismatchArray}
-    for i in 1:length(denoms)
+    for i in 1:length(mms)
         truncatenoise!(mms[i], thresh)
     end
-    return nothing
+    return mms
 end
 
 """
@@ -386,9 +390,9 @@ end
 # This yields the _effective_ overlap, i.e., sets to zero if gridsize==1 along a coordinate
 # imgssz = image spatial size
 function computeoverlap(imgssz, blocksize, gridsize)
-    gsz1 = max(1, [gridsize...] .- 1)
+    gsz1 = max.(1, [gridsize...] .- 1)
     tmp = [imgssz...] ./ gsz1
-    return blocksize - [ceil(Int, x) for x in tmp]
+    return [blocksize...] - [ceil(Int, x) for x in tmp]
 end
 
 leftedge(center, width) = ceil(Int, center - width / 2)
