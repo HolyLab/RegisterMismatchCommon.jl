@@ -10,7 +10,7 @@ RegisterCore = "67712758-55e7-5c3c-8e85-dda1d7758434"
 
 [compat]
 Aqua = "0.8"
-CenterIndexedArrays = "0.2, 1"
+CenterIndexedArrays = "1"
 Documenter = "1"
 ExplicitImports = "1"
 ImageCore = "0.8.1, 0.9, 0.10"
