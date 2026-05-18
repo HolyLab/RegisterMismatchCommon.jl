@@ -22,7 +22,7 @@ using RegisterCore: RegisterCore, MismatchArray, NumDenom, argmin_mismatch, maxs
 
 export correctbias!, nanpad, mismatch0, aperture_grid, allocate_mmarrays, default_aperture_width, truncatenoise!
 export DimsLike, WidthLike, each_point, aperture_range, assertsamesize, tovec, mismatch, padsize, set_FFTPROD
-export padranges, shiftrange, checksize_maxshift, register_translate
+export padranges, shiftrange, checksize_maxshift, register_translate, mismatch_apertures
 
 
 """
