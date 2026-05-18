@@ -1,6 +1,6 @@
 name = "RegisterMismatchCommon"
 uuid = "abb2e897-52bf-5d28-a379-6ca321e3b878"
-version = "1.0.1"
+version = "1.0.2"
 authors = ["Tim Holy <tim.holy@gmail.com>"]
 
 [deps]

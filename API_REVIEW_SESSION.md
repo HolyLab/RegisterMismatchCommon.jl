@@ -1,29 +1,29 @@
 # Session Handoff — 2026-05-18
 
 ## Plan
-API_REVIEW_PLAN.md — RegisterMismatchCommon, v1.0.1
+API_REVIEW_PLAN.md — RegisterMismatchCommon, v1.0.2
 
 ## What was just completed
-CHUNK-002: export-mismatch-apertures
-Added `mismatch_apertures` to the `export` list at line 25 of `src/RegisterMismatchCommon.jl`. Verified `:mismatch_apertures in names(RegisterMismatchCommon)` returns `true` after restart; 0 new ambiguities.
+CHUNK-012: version-bump
+
+Bumped `version` in `Project.toml` from `"1.0.1"` to `"1.0.2"`. No CHANGELOG.md exists. All 13 chunks complete; both clusters (mutating-pairs, thresh-migration) fully complete. Full test suite confirmed green at v1.0.2.
 
 ## Key decisions / shim choices
-- Appended to the third export line (line 25) alongside `register_translate`.
-- No tests needed: export visibility is structural, not behavioral.
+- Patch bump (1.0.1 → 1.0.2) per the explicit user preference recorded in Stated values: breaking changes accepted at patch level for this package.
 
 ## State of the codebase
-- Files modified: `src/RegisterMismatchCommon.jl` (line 25, added `mismatch_apertures` to exports)
-- Test suite: not re-run this chunk (export-only change; baseline was 140/140)
-- Ambiguity count: 0 (unchanged)
-- Staged but uncommitted: yes (`src/RegisterMismatchCommon.jl`)
+- Files modified: `Project.toml`
+- Test suite: 322/322 passing
+- Ambiguity count: 0 (unchanged from baseline)
+- Staged but uncommitted: yes (CHUNK-003 through CHUNK-012 all uncommitted)
 
 ## Cluster status
-- mutating-pairs: 0 of 2 complete
-- thresh-migration: 0 of 2 complete
+- **mutating-pairs**: 2 of 2 complete ✓
+- **thresh-migration**: 2 of 2 complete ✓
 
 ## Next chunk
-CHUNK-003: mismatch-kwargs-forwarding — replace explicit `normalization=:intensity` keyword in both `mismatch` methods with `kwargs...` forwarding to the downstream protocol.
+None — all chunks complete. The API review is finished.
 
 ## Watch out for
-- The `normalization` keyword moves from this package to the downstream. Callers who mis-spell `normalization` will now get an error from downstream rather than from this package. Acceptable per the stated values.
-- Both `mismatch` method signatures (the `{T<:AbstractFloat}` one and the promoting one) need updating.
+- All changes since CHUNK-002 are uncommitted. Commit (per-chunk or as a batch PR) before registering.
+- Release steps: commit → tag `v1.0.2` → register via JuliaRegistrator on the merge commit. The registry registration is separate from the git tag.
