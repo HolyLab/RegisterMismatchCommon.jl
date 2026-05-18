@@ -382,6 +382,42 @@ DocMeta.setdocmeta!(RegisterMismatchCommon, :DocTestSetup, :(using RegisterMisma
         @test length(ov2) == 2
     end
 
+    @testset "mismatch / mismatch_apertures (promoting dispatch)" begin
+        # General protocol stubs — lower specificity than the Matrix{Float32} stub
+        # defined in the register_translate testset below, so both coexist without conflict.
+        function RegisterMismatchCommon.mismatch(::Type{T}, f, m, ms; kwargs...) where T
+            MismatchArray(T, (2 .* collect(ms) .+ 1)...)
+        end
+        function RegisterMismatchCommon.mismatch_apertures(::Type{T}, f, m,
+                                                            aperture_centers,
+                                                            aperture_width, ms;
+                                                            kwargs...) where T
+            allocate_mmarrays(T, aperture_centers, ms)
+        end
+
+        # T1: non-AbstractFloat arrays promote to Float32 (line 80)
+        result = mismatch(ones(Int, 4, 4), ones(Int, 4, 4), (1, 1))
+        @test eltype(result) === NumDenom{Float32}
+
+        # T2: mismatch_apertures promoting dispatch
+        centers = [(4.0, 4.0), (8.0, 4.0)]
+        width   = (4.0, 4.0)
+        # AbstractFloat array → dispatches typed (line 82); Float64 stays Float64
+        mms64 = mismatch_apertures(ones(Float64, 12, 8), ones(Float64, 12, 8),
+                                   centers, width, (1, 1))
+        @test eltype(first(mms64)) === NumDenom{Float64}
+        # Non-Float array → promoted to Float32 (line 83)
+        mms_int = mismatch_apertures(ones(Int, 12, 8), ones(Int, 12, 8),
+                                     centers, width, (1, 1))
+        @test eltype(first(mms_int)) === NumDenom{Float32}
+
+        # T3: mismatch_apertures gridsize form — builds aperture_centers internally (lines 85-89)
+        fixed = ones(Float32, 16, 16)
+        mms_gs = mismatch_apertures(Float32, fixed, fixed, (2, 2), (1, 1))
+        @test size(mms_gs) == (2, 2)
+        @test eltype(first(mms_gs)) === NumDenom{Float32}
+    end
+
     @testset "register_translate (thresh shim)" begin
         # Stub out the protocol mismatch method so register_translate can be exercised
         # without a concrete RegisterMismatch package.
