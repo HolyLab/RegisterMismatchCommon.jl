@@ -21,8 +21,8 @@ using ImageCore: ImageCore, coords_spatial, sdims
 using RegisterCore: RegisterCore, MismatchArray, NumDenom, argmin_mismatch, maxshift, separate
 
 export correctbias!, correctbias, nanpad, mismatch0, mismatch_zeroshift, aperture_grid, allocate_mmarrays, default_aperture_width, truncatenoise!, truncatenoise
-export DimsLike, WidthLike, each_point, aperture_range, assertsamesize, checksamesize, tovec, mismatch, padsize, FFTPROD
-export padranges, shiftrange, checksize_maxshift, register_translate, mismatch_apertures
+export DimsLike, WidthLike, each_aperture_center, each_point, aperture_range, assertsamesize, checksamesize, tovec, mismatch, padsize, FFTPROD, set_FFTPROD
+export padranges, shiftrange, checksizemaxshift, checksize_maxshift, register_translate, mismatch_apertures
 
 
 """
@@ -58,8 +58,26 @@ This setting affects `padsize` and `padranges`.  To change it, write to the
 ```julia
 RegisterMismatchCommon.FFTPROD[] = [2, 3, 5]  # allow sizes 2^a * 3^b * 5^c
 ```
+
+Alternatively, use [`set_FFTPROD`](@ref):
+```julia
+set_FFTPROD([2, 3, 5])
+```
 """
 const FFTPROD = Ref([2, 3])
+
+"""
+    set_FFTPROD(primes)
+
+Set the list of prime factors used when selecting FFT-friendly array sizes.
+Equivalent to `FFTPROD[] = primes`. The default is `[2, 3]`.
+
+# Example
+```julia
+set_FFTPROD([2, 3, 5])  # allow sizes 2^a * 3^b * 5^c
+```
+"""
+set_FFTPROD(primes) = (FFTPROD[] = primes; nothing)
 
 """
     mismatch(fixed, moving, maxshift; normalization=:intensity) -> MismatchArray
@@ -374,18 +392,20 @@ function Base.iterate(iter::FirstDimIterator, state)
 end
 
 """
-    iter = each_point(points)
+    iter = each_aperture_center(points)
 
-Return an iterator over the points in `points`.
+Return an iterator over the aperture centers in `points`.
 
 `points` may be:
 - An `AbstractArray` of tuples or `AbstractVector`s: each element is yielded as-is.
 - An `AbstractArray{<:Real}` where points are laid out along the first dimension
   (e.g., columns of a matrix): each point is yielded as a `Vector`.
 """
-each_point(aperture_centers::AbstractArray{C}) where {C <: Union{AbstractVector, Tuple}} = ContainerIterator(aperture_centers)
+each_aperture_center(aperture_centers::AbstractArray{C}) where {C <: Union{AbstractVector, Tuple}} = ContainerIterator(aperture_centers)
 
-each_point(aperture_centers::AbstractArray{R}) where {R <: Real} = FirstDimIterator(aperture_centers)
+each_aperture_center(aperture_centers::AbstractArray{R}) where {R <: Real} = FirstDimIterator(aperture_centers)
+
+Base.@deprecate each_point(args...) each_aperture_center(args...)
 
 """
 `rng = aperture_range(center, width)` returns a tuple of
@@ -486,7 +506,7 @@ end
 
 
 """
-    checksize_maxshift(A, maxshift)
+    checksizemaxshift(A, maxshift)
 
 Validate that array `A` has the size expected for a mismatch array with the
 given `maxshift`.  Checks that `size(A, d) == 2maxshift[d] + 1` for every
@@ -494,13 +514,15 @@ dimension `d`.
 
 Throws an `ErrorException` on failure; returns `nothing` on success.
 """
-function checksize_maxshift(A::AbstractArray, maxshift)
+function checksizemaxshift(A::AbstractArray, maxshift)
     ndims(A) == length(maxshift) || error("Array is $(ndims(A))-dimensional, but maxshift has length $(length(maxshift))")
     for i in 1:ndims(A)
         size(A, i) == 2 * maxshift[i] + 1 || error("Along dimension $i, the output size $(size(A, i)) does not agree with maxshift[$i] = $(maxshift[i])")
     end
     return nothing
 end
+
+Base.@deprecate checksize_maxshift(A, maxshift) checksizemaxshift(A, maxshift)
 
 """
     padranges(blocksize, maxshift) -> Vector{UnitRange{Int}}
