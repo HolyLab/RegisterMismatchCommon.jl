@@ -27,6 +27,14 @@ DocMeta.setdocmeta!(RegisterMismatchCommon, :DocTestSetup, :(using RegisterMisma
         @test RegisterMismatchCommon.FFTPROD[] == old
     end
 
+    @testset "set_FFTPROD" begin
+        old = copy(RegisterMismatchCommon.FFTPROD[])
+        set_FFTPROD([2, 3, 5])
+        @test RegisterMismatchCommon.FFTPROD[] == [2, 3, 5]
+        set_FFTPROD(old)
+        @test RegisterMismatchCommon.FFTPROD[] == old
+    end
+
     @testset "tovec" begin
         v = [1, 2, 3]
         @test tovec(v) === v
@@ -416,6 +424,25 @@ DocMeta.setdocmeta!(RegisterMismatchCommon, :DocTestSetup, :(using RegisterMisma
         mms_gs = mismatch_apertures(Float32, fixed, fixed, (2, 2), (1, 1))
         @test size(mms_gs) == (2, 2)
         @test eltype(first(mms_gs)) === NumDenom{Float32}
+    end
+
+    @testset "extraunsafe_view" begin
+        A = reshape(collect(1:16), 4, 4)
+
+        # UnitRange path: exercises unsafe_reindex(UnitRange) and get_index_wo_boundcheck
+        V = view(A, 1:4, 1:4)
+        W = RegisterMismatchCommon.extraunsafe_view(V, 1:3, 1:3)
+        @test collect(W) == A[1:3, 1:3]
+
+        # Scalar (dropped-dimension) path: V.indices contains a scalar, exercises unsafe_reindex(Real)
+        V2 = view(A, 2, 1:4)
+        W2 = RegisterMismatchCommon.extraunsafe_view(V2, 1:3)
+        @test collect(W2) == A[2, 1:3]
+
+        # AbstractArray index path: exercises unsafe_reindex(AbstractArray)
+        V3 = view(A, [1, 3], 1:4)
+        W3 = RegisterMismatchCommon.extraunsafe_view(V3, 1:2, 1:3)
+        @test collect(W3) == A[[1, 3], 1:3]
     end
 
     @testset "register_translate (thresh shim)" begin
