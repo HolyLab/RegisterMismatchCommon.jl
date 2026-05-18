@@ -19,12 +19,12 @@ DocMeta.setdocmeta!(RegisterMismatchCommon, :DocTestSetup, :(using RegisterMisma
         test_explicit_imports(RegisterMismatchCommon)
     end
 
-    @testset "set_FFTPROD" begin
-        old = copy(RegisterMismatchCommon.FFTPROD)
-        set_FFTPROD([2, 3, 5])
-        @test RegisterMismatchCommon.FFTPROD == [2, 3, 5]
-        set_FFTPROD(old)
-        @test RegisterMismatchCommon.FFTPROD == old
+    @testset "FFTPROD" begin
+        old = copy(RegisterMismatchCommon.FFTPROD[])
+        RegisterMismatchCommon.FFTPROD[] = [2, 3, 5]
+        @test RegisterMismatchCommon.FFTPROD[] == [2, 3, 5]
+        RegisterMismatchCommon.FFTPROD[] = old
+        @test RegisterMismatchCommon.FFTPROD[] == old
     end
 
     @testset "tovec" begin
@@ -57,40 +57,46 @@ DocMeta.setdocmeta!(RegisterMismatchCommon, :DocTestSetup, :(using RegisterMisma
         @test_throws ErrorException nanpad([1.0], [1.0 2.0])
     end
 
-    @testset "mismatch0 (fixed/moving)" begin
+    @testset "mismatch_zeroshift (fixed/moving)" begin
         a = [1.0 2.0; 3.0 4.0]
         # Identical arrays → num==0
-        nd = mismatch0(a, a)
+        nd = mismatch_zeroshift(a, a)
         @test nd.num == 0.0
         @test nd.denom > 0.0
 
         # Different arrays → positive num
         b = [2.0 3.0; 4.0 5.0]
-        nd2 = mismatch0(a, b)
+        nd2 = mismatch_zeroshift(a, b)
         @test nd2.num > 0.0
 
         # :pixels normalization
-        nd3 = mismatch0(a, b; normalization = :pixels)
+        nd3 = mismatch_zeroshift(a, b; normalization = :pixels)
         @test nd3.denom == 4.0   # 4 finite pixels
 
         # NaN elements are skipped
         c = [1.0 NaN; 3.0 4.0]
-        nd4 = mismatch0(a, c)
+        nd4 = mismatch_zeroshift(a, c)
         @test nd4.denom ≈ a[1,1]^2 + c[1,1]^2 + a[2,1]^2 + c[2,1]^2 + a[2,2]^2 + c[2,2]^2
 
         # Size mismatch error
-        @test_throws DimensionMismatch mismatch0(a, [1.0 2.0])
+        @test_throws DimensionMismatch mismatch_zeroshift(a, [1.0 2.0])
 
         # Unrecognized normalization
-        @test_throws ErrorException mismatch0(a, a; normalization = :bogus)
+        @test_throws ErrorException mismatch_zeroshift(a, a; normalization = :bogus)
+
+        # Deprecated alias still works
+        @test_deprecated mismatch0(a, a)
     end
 
-    @testset "mismatch0 (array-of-MismatchArrays)" begin
+    @testset "mismatch_zeroshift (array-of-MismatchArrays)" begin
         mm = MismatchArray(Float64, 3, 3)
         mm[0, 0] = NumDenom{Float64}(1.0, 2.0)
         mms = [mm]
-        nd = mismatch0(mms)
+        nd = mismatch_zeroshift(mms)
         @test nd == NumDenom{Float64}(1.0, 2.0)
+
+        # Deprecated alias still works
+        @test_deprecated mismatch0(mms)
     end
 
     @testset "aperture_grid" begin
@@ -151,7 +157,7 @@ DocMeta.setdocmeta!(RegisterMismatchCommon, :DocTestSetup, :(using RegisterMisma
         # dim==1 uses nextpow(2,...)
         @test padsize(10, 3, 1) == nextpow(2, 16)
         # dim==2 uses nextprod
-        @test padsize(10, 3, 2) == nextprod(RegisterMismatchCommon.FFTPROD, 16)
+        @test padsize(10, 3, 2) == nextprod(RegisterMismatchCommon.FFTPROD[], 16)
         # maxshift==0: no padding, no FFT
         @test padsize(10, 0, 1) == 10
         @test padsize(10, 0, 2) == 10
@@ -171,7 +177,7 @@ DocMeta.setdocmeta!(RegisterMismatchCommon, :DocTestSetup, :(using RegisterMisma
         end
     end
 
-    @testset "issamesize / assertsamesize" begin
+    @testset "issamesize / checksamesize" begin
         a = zeros(3, 4)
         b = zeros(3, 4)
         c = zeros(3, 5)
@@ -185,8 +191,11 @@ DocMeta.setdocmeta!(RegisterMismatchCommon, :DocTestSetup, :(using RegisterMisma
         @test !RegisterMismatchCommon.issamesize(a, (1:3, 1:5))
         @test !RegisterMismatchCommon.issamesize(a, (1:3,))
 
-        @test assertsamesize(a, b) === nothing
-        @test_throws ErrorException assertsamesize(a, c)
+        @test checksamesize(a, b) === nothing
+        @test_throws ErrorException checksamesize(a, c)
+
+        # Deprecated alias still works (forwards to checksamesize)
+        @test_deprecated assertsamesize(a, b)
     end
 
     @testset "allocate_mmarrays" begin
@@ -234,6 +243,43 @@ DocMeta.setdocmeta!(RegisterMismatchCommon, :DocTestSetup, :(using RegisterMisma
         end
     end
 
+    @testset "truncatenoise (non-mutating)" begin
+        mm = MismatchArray(Float64, 3, 3)
+        for I in eachindex(mm)
+            mm[I] = NumDenom{Float64}(1.0, Float64(abs(I[1]) + abs(I[2]) + 1))
+        end
+        thresh = 2.5
+        mm_orig = copy(mm)
+        mm_trunc = truncatenoise(mm, thresh)
+        @test mm_trunc !== mm
+        # Original untouched
+        for I in eachindex(mm)
+            @test mm[I] == mm_orig[I]
+        end
+        # Result matches in-place version
+        mm_inplace = truncatenoise!(copy(mm), thresh)
+        for I in eachindex(mm)
+            @test mm_trunc[I] == mm_inplace[I]
+        end
+
+        # Array-of-MismatchArrays form
+        mms = [MismatchArray(Float64, 3, 3) for _ in 1:2]
+        for mm2 in mms, I in eachindex(mm2)
+            mm2[I] = NumDenom{Float64}(1.0, 0.5)
+        end
+        mms_orig = deepcopy(mms)
+        mms_trunc = truncatenoise(mms, 1.0)
+        @test mms_trunc !== mms
+        # Originals untouched
+        for k in eachindex(mms), I in eachindex(mms[k])
+            @test mms[k][I] == mms_orig[k][I]
+        end
+        # Result was thresholded
+        for mm2 in mms_trunc, I in eachindex(mm2)
+            @test mm2[I] == NumDenom{Float64}(0.0, 0.0)
+        end
+    end
+
     @testset "correctbias!" begin
         # 2D MismatchArray: row 0 and column 0 are suspect
         mm = MismatchArray(Float64, 5, 5)  # shifts -2:2 in each dim
@@ -260,6 +306,46 @@ DocMeta.setdocmeta!(RegisterMismatchCommon, :DocTestSetup, :(using RegisterMisma
         for mm2 in mms, I in eachindex(mm2)
             if I[1] == 0 || I[2] == 0
                 @test mm2[I] != bad
+            end
+        end
+    end
+
+    @testset "correctbias (non-mutating)" begin
+        mm = MismatchArray(Float64, 5, 5)
+        good = NumDenom{Float64}(1.0, 1.0)
+        bad  = NumDenom{Float64}(99.0, 99.0)
+        for I in eachindex(mm)
+            mm[I] = (I[1] == 0 || I[2] == 0) ? bad : good
+        end
+        mm_orig = copy(mm)
+        mm_corr = correctbias(mm)
+        @test mm_corr !== mm
+        # Original untouched
+        for I in eachindex(mm)
+            @test mm[I] == mm_orig[I]
+        end
+        # Result matches in-place version
+        mm_inplace = correctbias!(copy(mm))
+        for I in eachindex(mm)
+            @test mm_corr[I] == mm_inplace[I]
+        end
+
+        # Array-of-MismatchArrays form
+        mms = [MismatchArray(Float64, 5, 5) for _ in 1:2]
+        for mm2 in mms, I in eachindex(mm2)
+            mm2[I] = (I[1] == 0 || I[2] == 0) ? bad : good
+        end
+        mms_orig = deepcopy(mms)
+        mms_corr = correctbias(mms)
+        @test mms_corr !== mms
+        # Originals untouched
+        for k in eachindex(mms), I in eachindex(mms[k])
+            @test mms[k][I] == mms_orig[k][I]
+        end
+        # Result matches in-place version
+        for k in eachindex(mms_corr), I in eachindex(mms_corr[k])
+            if I[1] == 0 || I[2] == 0
+                @test mms_corr[k][I] != bad
             end
         end
     end
@@ -294,5 +380,35 @@ DocMeta.setdocmeta!(RegisterMismatchCommon, :DocTestSetup, :(using RegisterMisma
         # gridsize 1 along first dim: gsz1 = max.(1, [0, 1]) = [1, 1]
         ov2 = RegisterMismatchCommon.computeoverlap((10, 10), (6, 6), (1, 2))
         @test length(ov2) == 2
+    end
+
+    @testset "register_translate (thresh shim)" begin
+        # Stub out the protocol mismatch method so register_translate can be exercised
+        # without a concrete RegisterMismatch package.
+        # MismatchArray(T, n, m) takes total size; for maxshift (k,k), size is (2k+1, 2k+1).
+        function RegisterMismatchCommon.mismatch(::Type{Float32},
+                                                  fixed::Matrix{Float32},
+                                                  moving::Matrix{Float32},
+                                                  maxshift::Dims{2}; kwargs...)
+            sz = 2 .* maxshift .+ 1
+            mm = MismatchArray(Float32, sz...)
+            mm[0, 0] = NumDenom{Float32}(0.0f0, 10.0f0)   # clear winner: zero mismatch, high denom
+            mm[1, 0] = NumDenom{Float32}(5.0f0, 10.0f0)
+            return mm
+        end
+
+        fixed  = zeros(Float32, 4, 4)
+        moving = zeros(Float32, 4, 4)
+
+        # keyword form returns the expected shift
+        result_kw = register_translate(fixed, moving, (1, 1); thresh=0.0)
+        @test result_kw == CartesianIndex(0, 0)
+
+        # default thresh (no keyword) also works
+        result_default = register_translate(fixed, moving, (1, 1))
+        @test result_default == CartesianIndex(0, 0)
+
+        # positional thresh form is no longer supported (removed in v1.0.2)
+        @test_throws MethodError register_translate(fixed, moving, (1, 1), 0.0)
     end
 end

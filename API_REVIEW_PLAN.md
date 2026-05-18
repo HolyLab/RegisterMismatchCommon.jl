@@ -23,6 +23,10 @@ All findings (Tier 1, Tier 2, Tier 3) are approved. Target release is v1.0.2 in 
 ## Decisions
 <!-- Answers to `decide` chunks land here, with the chunk ID. -->
 
+**CHUNK-006**: Replace `set_FFTPROD(v)` with `const FFTPROD = Ref([2, 3])`. Remove the setter entirely; callers write `RegisterMismatchCommon.FFTPROD[] = [2, 3, 5]`. All internal reads of `FFTPROD` must become `FFTPROD[]`. Rationale: fixes the non-idiomatic `set_` prefix and the non-const global in one change; `Ref`-based mutable config is standard Julia convention.
+
+**CHUNK-007**: Keep `dim` parameter name as-is; add a short comment clarifying it is a 1-based dimension index used as a dispatch switch (not renaming to `dimidx` or `first_dim::Bool`). Rationale: the 3-arg form is internal-only (called via `map` in `padranges`); the clarity gain does not justify any signature churn.
+
 ## Chunks
 
 ### CHUNK-001: preflight
@@ -55,8 +59,8 @@ All findings (Tier 1, Tier 2, Tier 3) are approved. Target release is v1.0.2 in 
 - **Description**: Change `mismatch(fixed::AbstractArray{T}, moving::AbstractArray{T}, maxshift::DimsLike; normalization=:intensity) where {T<:AbstractFloat}` to `mismatch(fixed::AbstractArray{T}, moving::AbstractArray{T}, maxshift::DimsLike; kwargs...) where {T<:AbstractFloat}` and forward `kwargs...` to the downstream `mismatch(T, fixed, moving, maxshift; kwargs...)`. Same for the promoting method 2. `mismatch_apertures` already uses this pattern at lines 84–85.
 - **Depends on**: CHUNK-001
 - **Verification**: existing tests green; callers passing `normalization=:pixels` still work
-- **Status**: `not-started`
-- **Notes**: `normalization` moves from an explicit keyword to being silently forwarded via `kwargs...`. If a caller mis-spells `normalization`, the error now comes from the downstream rather than this package — acceptable trade-off given the protocol design.
+- **Status**: `complete`
+- **Notes**: `normalization` moves from an explicit keyword to being silently forwarded via `kwargs...`. If a caller mis-spells `normalization`, the error now comes from the downstream rather than this package — acceptable trade-off given the protocol design. Edited lines 81–82 of `src/RegisterMismatchCommon.jl`. 140/140 tests passing; 0 ambiguities.
 
 ### CHUNK-004: correctbias-nonmutating
 - **Kind**: `implement`
@@ -66,8 +70,8 @@ All findings (Tier 1, Tier 2, Tier 3) are approved. Target release is v1.0.2 in 
 - **Description**: Add `correctbias(mm::MismatchArray, w=correctbias_weight(mm)) = correctbias!(copy(mm), w)` and `correctbias(mms::AbstractArray{<:MismatchArray}) = correctbias!(deepcopy(mms))`. Export `correctbias`. Follows Base convention that every `f!` with array output of the same shape has a non-mutating `f` companion.
 - **Depends on**: CHUNK-001
 - **Verification**: new tests call `correctbias` and verify result equals `correctbias!` on a copy; original not mutated
-- **Status**: `not-started`
-- **Notes**:
+- **Status**: `complete`
+- **Notes**: Added two methods in `src/RegisterMismatchCommon.jl` after `correctbias!`; added `correctbias` to export list. New testset "correctbias (non-mutating)" added to `test/runtests.jl`. Tests pass 260/260; 0 ambiguities.
 
 ### CHUNK-005: truncatenoise-nonmutating
 - **Kind**: `implement`
@@ -77,8 +81,8 @@ All findings (Tier 1, Tier 2, Tier 3) are approved. Target release is v1.0.2 in 
 - **Description**: Add `truncatenoise(mm, thresh) = truncatenoise!(copy(mm), thresh)` for both `AbstractArray{NumDenom{T}}` and `AbstractArray{<:MismatchArray}` variants. Export `truncatenoise`.
 - **Depends on**: CHUNK-001
 - **Verification**: new tests verify result matches `truncatenoise!` on a copy; original not mutated
-- **Status**: `not-started`
-- **Notes**:
+- **Status**: `complete`
+- **Notes**: Added two non-mutating `truncatenoise` methods after `truncatenoise!` in `src/RegisterMismatchCommon.jl`; added `truncatenoise` to export list; added testset "truncatenoise (non-mutating)" in `test/runtests.jl`. Full test suite 316/316 passing; 0 ambiguities (unchanged). Note: a `MismatchArray` argument dispatches to the flat-array form (uses `copy`); the array-of-MismatchArrays form uses `deepcopy` so each inner array is independent. The mutating-pairs cluster is now complete.
 
 ### CHUNK-006: decide-set-fftprod-style
 - **Kind**: `decide`
@@ -88,8 +92,8 @@ All findings (Tier 1, Tier 2, Tier 3) are approved. Target release is v1.0.2 in 
 - **Description**: Decide: (a) rename to `set_FFTPROD!(v)` — adds `!` to signal mutation, minimal change; (b) replace with a public `const FFTPROD = Ref([2,3])` so callers write `RegisterMismatchCommon.FFTPROD[] = [2,3,5]` directly; (c) keep as-is. Option (b) is most idiomatic but changes the API surface more substantially.
 - **Depends on**: CHUNK-001
 - **Verification**: depends on decision
-- **Status**: `not-started`
-- **Notes**: Record decision in the Decisions section above.
+- **Status**: `complete`
+- **Notes**: Decision: option (b) — replace with `const FFTPROD = Ref([2, 3])`; remove `set_FFTPROD` entirely; update all internal reads to `FFTPROD[]`. See Decisions section.
 
 ### CHUNK-007: decide-padsize-dim-semantics
 - **Kind**: `decide`
@@ -99,8 +103,8 @@ All findings (Tier 1, Tier 2, Tier 3) are approved. Target release is v1.0.2 in 
 - **Description**: Decide: (a) rename `dim` to `first_dim::Bool` (cleaner semantics: `true` means use `nextpow(2,…)`); (b) rename `dim` to `dimidx` to at least clarify it is a 1-based integer; (c) keep as-is and add a comment. Both exported methods are used by `padranges`; this is an internal clarity issue with no performance consequence.
 - **Depends on**: CHUNK-001
 - **Verification**: depends on decision
-- **Status**: `not-started`
-- **Notes**: Record decision in the Decisions section above.
+- **Status**: `complete`
+- **Notes**: Decision: option (c) — keep `dim` as-is and add a short inline comment. The 3-arg form is internal only (called via `map` in `padranges`); no rename warranted. See Decisions section.
 
 ### CHUNK-008: register-translate-thresh-shim
 - **Kind**: `implement`
@@ -110,8 +114,8 @@ All findings (Tier 1, Tier 2, Tier 3) are approved. Target release is v1.0.2 in 
 - **Description**: Add a keyword-accepting overload: `register_translate(fixed, moving, maxshift; thresh=nothing)` that calls the implementation. Deprecate the positional form with `Base.@deprecate register_translate(fixed, moving, maxshift, thresh) register_translate(fixed, moving, maxshift; thresh=thresh)`. This gives callers a migration path before T1-A removes the positional form.
 - **Depends on**: CHUNK-001
 - **Verification**: both `register_translate(f, m, s, 0.1)` (with deprecation warning) and `register_translate(f, m, s; thresh=0.1)` work correctly
-- **Status**: `not-started`
-- **Notes**:
+- **Status**: `complete`
+- **Notes**: Replaced existing method `register_translate(fixed, moving, maxshift, thresh=nothing)` with `register_translate(fixed, moving, maxshift; thresh=nothing)` (also changed `== nothing` to `=== nothing`). Added `@deprecate register_translate(fixed, moving, maxshift, thresh) register_translate(fixed, moving, maxshift; thresh=thresh)`. Updated docstring signature. Added testset "register_translate (thresh shim)" with a local stub for `mismatch(::Type{Float32}, ...)` — uses `MismatchArray(Float32, (2.*maxshift.+1)...)` to construct a valid array. 320/320 tests passing; 0 ambiguities. thresh-migration cluster: 1 of 2 complete.
 
 ### CHUNK-009: register-translate-thresh-keyword
 - **Kind**: `implement`
@@ -121,8 +125,8 @@ All findings (Tier 1, Tier 2, Tier 3) are approved. Target release is v1.0.2 in 
 - **Description**: Remove the positional `thresh` method (deprecation added in CHUNK-008). Final signature: `register_translate(fixed, moving, maxshift; thresh=nothing)`. Callers writing `register_translate(f, m, s, 0.1)` will break.
 - **Depends on**: CHUNK-008
 - **Verification**: no remaining method with positional `thresh`; `register_translate(f, m, s; thresh=0.1)` works; `register_translate(f, m, s, 0.1)` throws `MethodError`
-- **Status**: `not-started`
-- **Notes**:
+- **Status**: `complete`
+- **Notes**: Removed the `@deprecate register_translate(fixed, moving, maxshift, thresh) ...` line from `src/RegisterMismatchCommon.jl`. Updated the testset in `test/runtests.jl`: the `@test_deprecated` assertion is replaced by `@test_throws MethodError register_translate(fixed, moving, (1, 1), 0.0)`. 319/319 tests passing; 0 ambiguities. **thresh-migration cluster complete (2 of 2).**
 
 ### CHUNK-010: rename-assertsamesize
 - **Kind**: `implement`
@@ -132,8 +136,8 @@ All findings (Tier 1, Tier 2, Tier 3) are approved. Target release is v1.0.2 in 
 - **Description**: Rename `assertsamesize` → `checksamesize`. Add a deprecation: `@deprecate assertsamesize(A, B) checksamesize(A, B)`. Update all internal call sites. Export `checksamesize`; keep `assertsamesize` as deprecated.
 - **Depends on**: CHUNK-001
 - **Verification**: `checksamesize` works; `assertsamesize` triggers a deprecation warning; tests green
-- **Status**: `not-started`
-- **Notes**:
+- **Status**: `complete`
+- **Notes**: Renamed `assertsamesize` → `checksamesize` in `src/RegisterMismatchCommon.jl`; added `Base.@deprecate assertsamesize(A, B) checksamesize(A, B)`. No internal call sites outside the function definition itself. Added `checksamesize` to the export list (kept `assertsamesize` exported so the deprecation path is reachable). Updated `test/runtests.jl` testset to "issamesize / checksamesize", calling `checksamesize` and adding `@test_deprecated assertsamesize(a, b)`. 320/320 tests passing; 0 ambiguities (unchanged).
 
 ### CHUNK-011: rename-mismatch0
 - **Kind**: `implement`
@@ -143,8 +147,19 @@ All findings (Tier 1, Tier 2, Tier 3) are approved. Target release is v1.0.2 in 
 - **Description**: Rename `mismatch0` → `mismatch_zeroshift`. Add deprecation: `@deprecate mismatch0(args...; kwargs...) mismatch_zeroshift(args...; kwargs...)`. Update all internal call sites. Export `mismatch_zeroshift`; keep `mismatch0` as deprecated.
 - **Depends on**: CHUNK-001
 - **Verification**: `mismatch_zeroshift` works for both method signatures; `mismatch0` warns; tests green
-- **Status**: `not-started`
-- **Notes**:
+- **Status**: `complete`
+- **Notes**: Renamed both `mismatch0` methods (image-pair and array-of-MismatchArrays forms) to `mismatch_zeroshift`. Added `Base.@deprecate mismatch0(args...; kwargs...) mismatch_zeroshift(args...; kwargs...)` after the two new definitions. Updated module docstring (line 15), both function docstrings, and cross-references. Added `mismatch_zeroshift` to exports (kept `mismatch0` exported for deprecation path). Updated both testsets in `test/runtests.jl` (renamed and added `@test_deprecated` calls). 322/322 tests passing; 0 ambiguities (unchanged).
+
+### CHUNK-013: implement-fftprod-ref
+- **Kind**: `implement`
+- **Originating finding**: T3-B (decided in CHUNK-006) — replace non-const `FFTPROD = [2, 3]` and `set_FFTPROD(v)` setter with `const FFTPROD = Ref([2, 3])`; callers write `RegisterMismatchCommon.FFTPROD[] = [2, 3, 5]`
+- **Cluster**: none
+- **Breaking**: yes (`set_FFTPROD` removed; callers must switch to `FFTPROD[] = …`)
+- **Description**: Replace `FFTPROD = [2, 3]` (line 48) with `const FFTPROD = Ref([2, 3])`. Remove the `set_FFTPROD` docstring and function definition (lines 50–64). Update all internal reads of `FFTPROD` to `FFTPROD[]` (occurs in `padsize` at two call sites). Remove `set_FFTPROD` from the export list. Update the `padsize` docstring to refer to `FFTPROD[]`. Update the `set_FFTPROD` testset in `test/runtests.jl` (~line 22) to test the `Ref`-based API instead.
+- **Depends on**: CHUNK-006
+- **Verification**: `RegisterMismatchCommon.FFTPROD[] = [2, 3, 5]` works; `set_FFTPROD` is not exported; `padsize` still returns correct values; tests green
+- **Status**: `complete`
+- **Notes**: Replaced `FFTPROD = [2, 3]` with `const FFTPROD = Ref([2, 3])` and a new docstring explaining the `Ref`-based API. Removed the `set_FFTPROD` docstring and function definition entirely. Replaced `set_FFTPROD` with `FFTPROD` in the export list. Updated both `nextprod(FFTPROD, p)` call sites in `padsize` (3-arg `Int` form and 3-arg collection form) to `nextprod(FFTPROD[], p)`. Updated the `padsize` docstring to say `` `FFTPROD[]` primes ``. Updated `test/runtests.jl`: renamed testset to "FFTPROD", replaced `set_FFTPROD(…)` calls with `RegisterMismatchCommon.FFTPROD[] = …`, and updated the `padsize` test to use `FFTPROD[]`. 322/322 tests passing; 0 ambiguities (unchanged). (Revise warns about `cannot declare FFTPROD constant` in the live MCP session — informational only; `Pkg.test()` subprocess starts clean and passes.)
 
 ### CHUNK-012: version-bump
 - **Kind**: `version-bump`
@@ -152,10 +167,10 @@ All findings (Tier 1, Tier 2, Tier 3) are approved. Target release is v1.0.2 in 
 - **Cluster**: none
 - **Breaking**: yes
 - **Description**: Bump version to `1.0.2` in `Project.toml`. Update CHANGELOG if one exists. Verify no half-finished clusters (mutating-pairs, thresh-migration must both be complete).
-- **Depends on**: CHUNK-002, CHUNK-003, CHUNK-004, CHUNK-005, CHUNK-006, CHUNK-007, CHUNK-008, CHUNK-009, CHUNK-010, CHUNK-011
+- **Depends on**: CHUNK-002, CHUNK-003, CHUNK-004, CHUNK-005, CHUNK-006, CHUNK-007, CHUNK-008, CHUNK-009, CHUNK-010, CHUNK-011, CHUNK-013
 - **Verification**: full test suite green; `Test.detect_ambiguities` count ≤ baseline; working tree clean
-- **Status**: `not-started`
-- **Notes**:
+- **Status**: `complete`
+- **Notes**: Bumped `version` in `Project.toml` from `1.0.1` to `1.0.2`. No CHANGELOG.md exists. All dependencies complete; both clusters (mutating-pairs, thresh-migration) complete. 322/322 tests passing at v1.0.2; 0 ambiguities.
 
 ## Dropped findings
 <!-- Items the user chose not to act on, with one-line reasons. Preserved for institutional memory. -->
@@ -167,5 +182,20 @@ None — all findings included.
 
 **Session 2026-05-18**: Implemented CHUNK-001 (preflight). Baseline: 140/140 tests passing, 0 ambiguities, version 1.0.1. Next up: CHUNK-002 (export `mismatch_apertures`).
 **Session 2026-05-18**: Implemented CHUNK-002 (export-mismatch-apertures). Added `mismatch_apertures` to the export list at line 25 of `src/RegisterMismatchCommon.jl`; confirmed exported and 0 new ambiguities. Next up: CHUNK-003 (mismatch-kwargs-forwarding).
+**Session 2026-05-18**: Implemented CHUNK-003 (mismatch-kwargs-forwarding). Replaced `normalization=:intensity` with `kwargs...` in both `mismatch` methods at lines 81–82 of `src/RegisterMismatchCommon.jl`. Full test suite passing (140/140); 0 ambiguities. Next up: CHUNK-004 (correctbias-nonmutating) — first chunk of the mutating-pairs cluster.
+**Session 2026-05-18**: Implemented CHUNK-004 (correctbias-nonmutating). Added non-mutating `correctbias` methods (single `MismatchArray` and `AbstractArray{<:MismatchArray}` variants), exported `correctbias`, added testset. 260/260 tests passing; 0 ambiguities. Next up: CHUNK-005 (truncatenoise-nonmutating) — second/final chunk of the mutating-pairs cluster.
+**Session 2026-05-18**: Implemented CHUNK-005 (truncatenoise-nonmutating). Added non-mutating `truncatenoise(mm, thresh)` for the flat-array form (uses `copy`) and the array-of-MismatchArrays form (uses `deepcopy`); exported `truncatenoise`; added testset. 316/316 tests passing; 0 ambiguities. **mutating-pairs cluster complete.** Next up: CHUNK-006 / CHUNK-007 (decide chunks; can be batched).
+**Session 2026-05-18**: Decided CHUNK-006 (decide-set-fftprod-style) and CHUNK-007 (decide-padsize-dim-semantics). CHUNK-006: replace `set_FFTPROD` with `const FFTPROD = Ref([2, 3])`; all internal reads become `FFTPROD[]`. CHUNK-007: keep `dim` parameter as-is; added inline comment clarifying it is a 1-based index used as a dispatch switch. Next up: CHUNK-008 (register-translate-thresh-shim) — first chunk of the thresh-migration cluster.
+**Session 2026-05-18**: Implemented CHUNK-009 (register-translate-thresh-keyword). Removed the `@deprecate` line for the 4-arg positional form; updated the testset to assert `@test_throws MethodError` instead of `@test_deprecated`. 319/319 tests passing; 0 ambiguities. **thresh-migration cluster complete.** Next up: CHUNK-010 (rename-assertsamesize → checksamesize).
+
+**Session 2026-05-18**: Implemented CHUNK-008 (register-translate-thresh-shim). Converted `register_translate` from positional `thresh` default to keyword `thresh=nothing`; added `@deprecate` for the 4-arg positional form; updated docstring. Added testset using a local protocol stub. 320/320 passing; 0 ambiguities. **thresh-migration cluster: 1 of 2 complete.** Next up: CHUNK-009 (register-translate-thresh-keyword) — breaking removal of the deprecated positional form.
+
+**Session 2026-05-18**: Implemented CHUNK-010 (rename-assertsamesize → checksamesize). Renamed the function in `src/RegisterMismatchCommon.jl`, added `Base.@deprecate` shim, added `checksamesize` to exports (kept `assertsamesize` exported for the deprecation path). Updated the testset in `test/runtests.jl`. 320/320 passing; 0 ambiguities. Next up: CHUNK-011 (rename-mismatch0 → mismatch_zeroshift). Open question flagged: CHUNK-006's decision (replace `set_FFTPROD` with `const FFTPROD = Ref([2,3])`) was marked complete as a `decide` chunk but the *implementation* has not happened — should be added as a new implement chunk before CHUNK-012.
+
+**Session 2026-05-18**: Implemented CHUNK-011 (rename-mismatch0 → mismatch_zeroshift). Renamed both `mismatch0` methods, added `Base.@deprecate` varargs shim, updated module docstring and cross-references, exported `mismatch_zeroshift`, added `@test_deprecated` assertions in both testsets. 322/322 passing; 0 ambiguities. Next up: CHUNK-013 (implement-fftprod-ref).
+
+**Session 2026-05-18**: Implemented CHUNK-013 (implement-fftprod-ref). Replaced non-const `FFTPROD` global and `set_FFTPROD` setter with `const FFTPROD = Ref([2, 3])`; updated both `padsize` call sites to `FFTPROD[]`; updated `padsize` docstring; replaced export; updated testset. 322/322 passing; 0 ambiguities. Next up: CHUNK-012 (version-bump) — the final chunk.
+
+**Session 2026-05-18**: Implemented CHUNK-012 (version-bump). Bumped `Project.toml` version from `1.0.1` to `1.0.2`. All chunks complete; 322/322 tests passing. **API review complete — ready to release v1.0.2.**
 
 ## Open Questions

@@ -12,7 +12,7 @@ Main entry points:
 Aperture workflow helpers: [`aperture_grid`](@ref), [`allocate_mmarrays`](@ref),
 [`default_aperture_width`](@ref), [`aperture_range`](@ref).
 
-Post-processing: [`correctbias!`](@ref), [`truncatenoise!`](@ref), [`mismatch0`](@ref).
+Post-processing: [`correctbias!`](@ref), [`truncatenoise!`](@ref), [`mismatch_zeroshift`](@ref).
 """
 module RegisterMismatchCommon
 
@@ -20,8 +20,8 @@ using CenterIndexedArrays: CenterIndexedArrays, CenterIndexedArray
 using ImageCore: ImageCore, coords_spatial, sdims
 using RegisterCore: RegisterCore, MismatchArray, NumDenom, argmin_mismatch, maxshift, separate
 
-export correctbias!, nanpad, mismatch0, aperture_grid, allocate_mmarrays, default_aperture_width, truncatenoise!
-export DimsLike, WidthLike, each_point, aperture_range, assertsamesize, tovec, mismatch, padsize, set_FFTPROD
+export correctbias!, correctbias, nanpad, mismatch0, mismatch_zeroshift, aperture_grid, allocate_mmarrays, default_aperture_width, truncatenoise!, truncatenoise
+export DimsLike, WidthLike, each_point, aperture_range, assertsamesize, checksamesize, tovec, mismatch, padsize, FFTPROD
 export padranges, shiftrange, checksize_maxshift, register_translate, mismatch_apertures
 
 
@@ -45,23 +45,21 @@ Type alias for values that specify aperture widths — accepted as either a
 """
 const WidthLike = Union{AbstractVector, Tuple}
 
-FFTPROD = [2, 3]
-
 """
-    set_FFTPROD(v)
+    const FFTPROD = Ref([2, 3])
 
-Set the global list of prime factors used when selecting FFT-friendly array
-sizes.  The default is `[2, 3]`, meaning padded sizes are products of powers
-of 2 and 3.
+Mutable reference to the list of prime factors used when selecting FFT-friendly
+array sizes.  The default is `[2, 3]`, meaning padded sizes are products of
+powers of 2 and 3.
 
-This setting affects `padsize` and `padranges`.
+This setting affects `padsize` and `padranges`.  To change it, write to the
+`Ref` directly:
 
-# Example
 ```julia
-set_FFTPROD([2, 3, 5])  # allow sizes of the form 2^a * 3^b * 5^c
+RegisterMismatchCommon.FFTPROD[] = [2, 3, 5]  # allow sizes 2^a * 3^b * 5^c
 ```
 """
-set_FFTPROD(v) = global FFTPROD = v
+const FFTPROD = Ref([2, 3])
 
 """
     mismatch(fixed, moving, maxshift; normalization=:intensity) -> MismatchArray
@@ -78,8 +76,8 @@ Returns a `MismatchArray` of `NumDenom` values indexed from `-maxshift` to
     by a downstream package such as `RegisterMismatch` (CPU) or
     `RegisterMismatchCuda` (GPU).
 """
-mismatch(fixed::AbstractArray{T}, moving::AbstractArray{T}, maxshift::DimsLike; normalization = :intensity) where {T <: AbstractFloat} = mismatch(T, fixed, moving, maxshift; normalization = normalization)
-mismatch(fixed::AbstractArray, moving::AbstractArray, maxshift::DimsLike; normalization = :intensity) = mismatch(Float32, fixed, moving, maxshift; normalization = normalization)
+mismatch(fixed::AbstractArray{T}, moving::AbstractArray{T}, maxshift::DimsLike; kwargs...) where {T <: AbstractFloat} = mismatch(T, fixed, moving, maxshift; kwargs...)
+mismatch(fixed::AbstractArray, moving::AbstractArray, maxshift::DimsLike; kwargs...) = mismatch(Float32, fixed, moving, maxshift; kwargs...)
 
 mismatch_apertures(fixed::AbstractArray{T}, moving::AbstractArray{T}, args...; kwargs...) where {T <: AbstractFloat} = mismatch_apertures(T, fixed, moving, args...; kwargs...)
 mismatch_apertures(fixed::AbstractArray, moving::AbstractArray, args...; kwargs...) = mismatch_apertures(Float32, fixed, moving, args...; kwargs...)
@@ -138,6 +136,16 @@ function correctbias!(mms::AbstractArray{M}) where {M <: MismatchArray}
     return mms
 end
 
+"""
+    correctbias(mm::MismatchArray[, w]) -> mm′
+    correctbias(mms::AbstractArray{<:MismatchArray}) -> mms′
+
+Non-mutating counterpart of [`correctbias!`](@ref); returns a corrected copy of
+the input, leaving the original unchanged.
+"""
+correctbias(mm::MismatchArray, w = correctbias_weight(mm)) = correctbias!(copy(mm), w)
+correctbias(mms::AbstractArray{<:MismatchArray}) = correctbias!(deepcopy(mms))
+
 function correctbias_weight(mm::MismatchArray{ND, N}) where {ND, N}
     T = eltype(ND)
     w = CenterIndexedArray(ones(T, size(mm)))
@@ -182,7 +190,7 @@ nanval(::Type{T}) where {T <: AbstractFloat} = convert(T, NaN)
 nanval(::Type{T}) where {T} = convert(Float32, NaN)
 
 """
-    mm0 = mismatch0(fixed, moving; normalization=:intensity) -> NumDenom{Float64}
+    mm0 = mismatch_zeroshift(fixed, moving; normalization=:intensity) -> NumDenom{Float64}
 
 Compute the "as-is" mismatch between `fixed` and `moving` at zero shift.
 
@@ -191,9 +199,9 @@ Compute the "as-is" mismatch between `fixed` and `moving` at zero shift.
 `NumDenom{Float64}`; the ratio `mm0.num / mm0.denom` gives the normalized
 mismatch.
 
-See also: [`mismatch0(mms)`](@ref mismatch0(::AbstractArray)).
+See also: [`mismatch_zeroshift(mms)`](@ref mismatch_zeroshift(::AbstractArray)).
 """
-function mismatch0(fixed::AbstractArray{Tf, N}, moving::AbstractArray{Tm, N}; normalization = :intensity) where {Tf, Tm, N}
+function mismatch_zeroshift(fixed::AbstractArray{Tf, N}, moving::AbstractArray{Tm, N}; normalization = :intensity) where {Tf, Tm, N}
     size(fixed) == size(moving) || throw(DimensionMismatch("Size $(size(fixed)) of fixed is not equal to size $(size(moving)) of moving"))
     return _mismatch0(zero(Float64), zero(Float64), fixed, moving; normalization = normalization)
 end
@@ -224,15 +232,15 @@ function _mismatch0(num::T, denom::T, fixed::AbstractArray{Tf, N}, moving::Abstr
 end
 
 """
-    mm0 = mismatch0(mms::AbstractArray{<:MismatchArray}) -> NumDenom
+    mm0 = mismatch_zeroshift(mms::AbstractArray{<:MismatchArray}) -> NumDenom
 
 Extract and sum the zero-shift `NumDenom` from each element of an
 aperture-wise array-of-`MismatchArray`s, returning a single `NumDenom`
 representing the overall as-is mismatch.
 
-See also: [`mismatch0(fixed, moving)`](@ref mismatch0(::AbstractArray, ::AbstractArray)).
+See also: [`mismatch_zeroshift(fixed, moving)`](@ref mismatch_zeroshift(::AbstractArray, ::AbstractArray)).
 """
-function mismatch0(mms::AbstractArray{M}) where {M <: MismatchArray}
+function mismatch_zeroshift(mms::AbstractArray{M}) where {M <: MismatchArray}
     mm0 = eltype(M)(0, 0)
     cr = eachindex(first(mms))
     z = first(cr) + last(cr)  # all-zeros CartesianIndex
@@ -241,6 +249,8 @@ function mismatch0(mms::AbstractArray{M}) where {M <: MismatchArray}
     end
     return mm0
 end
+
+Base.@deprecate mismatch0(args...; kwargs...) mismatch_zeroshift(args...; kwargs...)
 
 """
     ag = aperture_grid(ssize, gridsize) -> Array{NTuple{N,Float64},N}
@@ -439,7 +449,17 @@ function truncatenoise!(mms::AbstractArray{A}, thresh::Real) where {A <: Mismatc
 end
 
 """
-    shift = register_translate(fixed, moving, maxshift[, thresh]) -> CartesianIndex
+    truncatenoise(mm::AbstractArray{NumDenom{T}}, thresh) -> mm′
+    truncatenoise(mms::AbstractArray{<:MismatchArray}, thresh) -> mms′
+
+Non-mutating counterpart of [`truncatenoise!`](@ref); returns a thresholded copy
+of the input, leaving the original unchanged.
+"""
+truncatenoise(mm::AbstractArray{NumDenom{T}}, thresh::Real) where {T <: Real} = truncatenoise!(copy(mm), thresh)
+truncatenoise(mms::AbstractArray{<:MismatchArray}, thresh::Real) = truncatenoise!(deepcopy(mms), thresh)
+
+"""
+    shift = register_translate(fixed, moving, maxshift; thresh=nothing) -> CartesianIndex
 
 Compute the integer-valued translation that best aligns `fixed` and `moving`.
 All shifts up to `maxshift` (in each dimension) are considered.
@@ -455,10 +475,10 @@ Returns a `CartesianIndex` of the best integer shift.
     Requires a concrete `mismatch` implementation to be loaded, e.g. from
     `RegisterMismatch` (CPU) or `RegisterMismatchCuda` (GPU).
 """
-function register_translate(fixed, moving, maxshift, thresh = nothing)
+function register_translate(fixed, moving, maxshift; thresh=nothing)
     mm = mismatch(fixed, moving, maxshift)
     _, denom = separate(mm)
-    if thresh == nothing
+    if thresh === nothing
         thresh = 0.25maximum(denom)
     end
     return argmin_mismatch(mm, thresh)
@@ -511,7 +531,7 @@ Compute the padded FFT size.
 
 The single-dimension form returns the smallest integer ≥ `blocksize + 2maxshift`
 that is efficient for FFT computation: a power of 2 along dimension 1, and a
-product of `FFTPROD` primes along other dimensions.  When `maxshift == 0`,
+product of `FFTPROD[]` primes along other dimensions.  When `maxshift == 0`,
 the input size is returned unchanged (that dimension will not be transformed).
 
 The multi-dimension form applies `padsize` independently to each dimension and
@@ -521,20 +541,23 @@ padsize(blocksize::Dims{N}, maxshift::Dims{N}) where {N} = map(padsize, blocksiz
 
 function padsize(blocksize::Int, maxshift::Int, dim::Int)
     p = blocksize + 2maxshift
-    return maxshift > 0 ? (dim == 1 ? nextpow(2, p) : nextprod(FFTPROD, p)) : p   # we won't FFT along dimensions with maxshift 0
+    # dim is a 1-based dimension index; dim==1 gets pow-of-2 padding, others get nextprod(FFTPROD[],…)
+    return maxshift > 0 ? (dim == 1 ? nextpow(2, p) : nextprod(FFTPROD[], p)) : p
 end
 
 """
-    assertsamesize(A, B)
+    checksamesize(A, B)
 
 Throw an `ErrorException` if `A` and `B` do not have the same axes along every
 dimension.  Returns `nothing` on success.
 """
-function assertsamesize(A, B)
+function checksamesize(A, B)
     return if !issamesize(A, B)
         error("Arrays are not the same size")
     end
 end
+
+Base.@deprecate assertsamesize(A, B) checksamesize(A, B)
 
 function issamesize(A::AbstractArray, B::AbstractArray)
     n = ndims(A)
@@ -614,7 +637,7 @@ unsafe_reindex(V, ::Tuple{}, ::Tuple{}) = ()
 function padsize(blocksize, maxshift, dim)
     m = maxshift[dim]
     p = blocksize[dim] + 2m
-    return m > 0 ? (dim == 1 ? nextpow(2, p) : nextprod(FFTPROD, p)) : p   # we won't FFT along dimensions with maxshift[i]==0
+    return m > 0 ? (dim == 1 ? nextpow(2, p) : nextprod(FFTPROD[], p)) : p   # we won't FFT along dimensions with maxshift[i]==0
 end
 
 end #module
